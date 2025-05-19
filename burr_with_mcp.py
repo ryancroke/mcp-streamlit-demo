@@ -20,6 +20,7 @@ if sys.platform.startswith("win"):
 DESTINATIONS = {
     "search_internet": "internet_search",
     "search_github": "github_search",
+    "search_atlassian": "atlassian_search",
     "general_ai_response": "general",
     "unknown": "unknown",
     "reset_mode": "general"
@@ -40,23 +41,28 @@ MCP_CONFIGS = {
         "env": {
             "BRAVE_API_KEY": "${BRAVE_API_KEY}"
         }
+    },
+    "atlassian": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse",
+      "--jira-url", "https://haptiq.atlassian.net"]
     }
 }
 
 def add_keys_to_config() -> dict:
+    keys_with_env_vars = [key for key in MCP_CONFIGS.keys() if "env" in MCP_CONFIGS[key]]
+    other_keys = [key for key in MCP_CONFIGS.keys() if key not in keys_with_env_vars]
+    
     config = {}
     config["mcpServers"] = {}
-    config["mcpServers"]["brave-search"] =  MCP_CONFIGS["brave-search"]
-    brave_key = os.getenv("BRAVE_API_KEY")
-    if brave_key and "brave-search" in config["mcpServers"]:
-         if "env" in config["mcpServers"]["brave-search"]:
-             config["mcpServers"]["brave-search"]["env"]["BRAVE_API_KEY"] = brave_key
-
-    config["mcpServers"]["github"] =  MCP_CONFIGS["github"]
-    github_pat = os.getenv("GITHUB_PAT")
-    if github_pat and "github" in config["mcpServers"]:
-         if "env" in config["mcpServers"]["github"]:
-             config["mcpServers"]["github"]["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"] = github_pat
+    for key in keys_with_env_vars:
+        config["mcpServers"][key] = MCP_CONFIGS[key]
+        if "env" in config["mcpServers"][key]:
+            for env_var in config["mcpServers"][key]["env"]:
+                config["mcpServers"][key]["env"][env_var] = os.getenv(env_var)
+                
+    for key in other_keys:
+        config["mcpServers"][key] = MCP_CONFIGS[key]
 
     return config
 
@@ -94,6 +100,7 @@ async def route_request(state: State) -> State:
         "For instance, if the prompt is 'search the internet for the latest news on the stock market', "
         "the mode would be 'search_internet'. If the prompt is 'what is the capital of France', the mode would be 'general_ai_response'."
         "If the prompt is about GitHub, the mode would be 'search_github'. If the prompt is about Brave Search, the mode would be 'search_internet'."
+        "If the prompt is about JIRA, the mode would be 'search_atlassian'."
         "If none of these modes apply, please respond with 'unknown'."
     )
 
@@ -152,6 +159,7 @@ async def perform_github_search(state: State) -> State:
 
     config = add_keys_to_config()
 
+    #TODO: Shouldnt we be subsetting the MCP server for each agaent since we are in that (Burr) state?
     client = MCPClient.from_dict(config)
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     agent = MCPAgent(llm=llm, client=client, max_steps=5)
@@ -159,6 +167,29 @@ async def perform_github_search(state: State) -> State:
     result = await agent.run(query_to_send) 
 
     return state.update(github_search_results=result)
+
+@action(reads=["user_input", "chat_history", "current_mode"], writes=["atlassian_search_results"]) 
+async def perform_atlassian_search(state: State) -> State:
+    print(">>> Searching JIRA...")
+    query = state["user_input"]
+    chat_history = state.get("chat_history", []) 
+    current_mode = state.get("current_mode", "general") 
+
+    truncated_history = truncate_history(chat_history)
+    history_string = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history])
+
+    query_to_send = f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
+
+
+    config = add_keys_to_config()
+
+    client = MCPClient.from_dict(config)
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    agent = MCPAgent(llm=llm, client=client, max_steps=5)
+
+    result = await agent.run(query_to_send) 
+
+    return state.update(atlassian_search_results=result)
 
 @action(reads=["user_input", "chat_history"], writes=["general_ai_response"])
 async def generate_general_ai_response(state: State) -> State:
@@ -204,6 +235,7 @@ def generate_final_response(state: State) -> State:
 
     internet_results = state.get("internet_search_results")
     github_results = state.get("github_search_results")
+    atlassian_results = state.get("atlassian_search_results")
     general_ai_resp = state.get("general_ai_response")
     destination = state["destination"]
 
@@ -211,6 +243,8 @@ def generate_final_response(state: State) -> State:
         final_response_content = f"Internet Search Results:\n{internet_results}"
     elif github_results:
         final_response_content = f"GitHub Search Results:\n{github_results}"
+    elif atlassian_results:
+        final_response_content = f"JIRA Search Results:\n{atlassian_results}"
     elif general_ai_resp:
         final_response_content = general_ai_resp
 
@@ -228,6 +262,8 @@ def generate_final_response(state: State) -> State:
         new_current_mode = "internet_search"
     elif destination == "search_github":
         new_current_mode = "github_search"
+    elif destination == "search_atlassian":
+        new_current_mode = "atlassian_search"
     elif destination == "general_ai_response":
         new_current_mode = "general"
     elif destination == "reset_mode":
@@ -243,14 +279,15 @@ def generate_final_response(state: State) -> State:
     )
 
 
-@action(reads=["final_response", "current_mode", "user_input", "internet_search_results", "github_search_results", "general_ai_response"],
-        writes=["user_input", "internet_search_results", "github_search_results", "general_ai_response"])
+@action(reads=["final_response", "current_mode", "user_input", "internet_search_results", "github_search_results", "general_ai_response", "atlassian_search_results"],
+        writes=["user_input", "internet_search_results", "github_search_results", "general_ai_response", "atlassian_search_results"])
 def present_response(state: State) -> State:
     print(f"AI: {state['final_response']}")
 
     user_input_to_clear = None
     internet_results_to_clear = state.get("internet_search_results")
     github_results_to_clear = state.get("github_search_results")
+    atlassian_results_to_clear = state.get("atlassian_search_results")
     general_ai_response_to_clear = state.get("general_ai_response")
     current_mode = state["current_mode"]
 
@@ -258,7 +295,10 @@ def present_response(state: State) -> State:
         internet_results_to_clear = None
     if current_mode != "github_search":
         github_results_to_clear = None
-    general_ai_response_to_clear = None
+    if current_mode != "atlassian_search":
+        atlassian_results_to_clear = None
+    if current_mode != "general":
+        general_ai_response_to_clear = None
 
 
     return state.update(
@@ -266,6 +306,7 @@ def present_response(state: State) -> State:
         internet_search_results=internet_results_to_clear,
         github_search_results=github_results_to_clear,
         general_ai_response=general_ai_response_to_clear,
+        atlassian_search_results=atlassian_results_to_clear
     )
 
 graph = (
@@ -274,6 +315,7 @@ graph = (
         get_user_input=get_user_input,
         route_request=route_request,
         perform_internet_search=perform_internet_search,
+        perform_atlassian_search=perform_atlassian_search,
         perform_github_search=perform_github_search,
         generate_general_ai_response=generate_general_ai_response,
         prompt_for_more=prompt_for_more,
@@ -284,14 +326,16 @@ graph = (
         ("get_user_input", "route_request"),
         ("route_request", "perform_internet_search", when(destination="search_internet")),
         ("route_request", "perform_github_search", when(destination="search_github")),
+        ("route_request", "perform_atlassian_search", when(destination="search_atlassian")),
         ("route_request", "generate_general_ai_response", when(destination="general_ai_response")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
         ("route_request", "prompt_for_more", default),
 
         (
-            ["perform_internet_search", "perform_github_search", "generate_general_ai_response"],
+            ["perform_internet_search", "perform_github_search", "perform_atlassian_search", "generate_general_ai_response"],
             "generate_final_response"
         ),
+        
         ("generate_final_response", "present_response"),
         ("present_response", "get_user_input"),
         ("prompt_for_more", "get_user_input")

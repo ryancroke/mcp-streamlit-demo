@@ -66,3 +66,9 @@ otherwise
 ```bash 
 streamlit run simple_app.py
 ``` 
+# ToDo
+1. Abstract out servers. Starting them every time is running into a problem
+1. There is information bleed in the app. Hunt this down.
+1. Find other improvements. 
+1. Add in sidebar to tell you whcih state you are in. 
+1. Open telemetry for Burr and get that together. 
