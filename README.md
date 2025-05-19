@@ -33,7 +33,7 @@ source .venv/bin/activate  # On Unix/macOS
 uv pip install .
 
 Create a `.env` file in the root directory with the following variables:
-```bash
+
 GITHUB_PAT=your_github_personal_access_token
 BRAVE_API_KEY=your_brave_api_key
 ```
@@ -48,4 +48,14 @@ https://github.com/github/github-mcp-server
 git clone https://github.com/github/github-mcp-server
 ```
 
+# Run Streamlit app
 
+on a mac if you are on a Mac M* chip you need to use Rosetta 2
+```
+arch
+``
+
+otherwise 
+```bash 
+streamlit run simple_app.py
+``` 
