@@ -33,10 +33,10 @@ source .venv/bin/activate  # On Unix/macOS
 uv pip install .
 
 Create a `.env` file in the root directory with the following variables:
-   ```
-   GITHUB_PAT=your_github_personal_access_token
-   BRAVE_API_KEY=your_brave_api_key
-   ```
+```bash
+GITHUB_PAT=your_github_personal_access_token
+BRAVE_API_KEY=your_brave_api_key
+```
 # Installing MCP Servers
 
 ## GitHub MCP Server
