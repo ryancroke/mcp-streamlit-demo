@@ -27,7 +27,7 @@ DESTINATIONS = {
 
 MCP_CONFIGS = {
     "github": {
-        "command": "github-mcp-server/github-mcp-server",
+        "command": "github-mcp-server/cmd/github-mcp-server/github-mcp-server",
         "args": ["stdio"],
         "working_directory": "github-mcp-server",
         "env": {

@@ -48,11 +48,18 @@ https://github.com/github/github-mcp-server
 git clone https://github.com/github/github-mcp-server
 ```
 
+You can install with Docker or using GO locally
+```
+If you don't have Docker, you can use go build to build the binary in the cmd/github-mcp-server directory, and use the github-mcp-server stdio command with the GITHUB_PERSONAL_ACCESS_TOKEN environment variable set to your token. 
+```
+
+Just point to the executable in the config and add your GITHUB_PERSONAL_TOKEN
+
 # Run Streamlit app
 
 on a mac if you are on a Mac M* chip you need to use Rosetta 2
 ```
-arch
+arch -x86_64 streamlit run simple_stremlit_MCP.py
 ``
 
 otherwise 
