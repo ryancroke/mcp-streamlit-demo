@@ -1,0 +1,14 @@
+[project]
+name = "burr-tests"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "burr>=0.39.1",
+    "langchain-openai>=0.3.17",
+    "mcp-use>=1.2.12",
+    "openai>=1.77.0",
+    "rich>=14.0.0",
+    "streamlit>=1.45.1",
+]
