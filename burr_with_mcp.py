@@ -1,13 +1,12 @@
 import sys
 import asyncio
 import os
-import json
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from mcp_use import MCPAgent, MCPClient
 
-from burr.core import Application, ApplicationBuilder, State, default, when, expr, graph
+from burr.core import Application, ApplicationBuilder, State, default, when, graph
 from burr.core.action import action
 from burr.lifecycle import LifecycleAdapter
 from burr.tracking import LocalTrackingClient
@@ -50,26 +49,20 @@ MCP_CONFIGS = {
 }
 
 def add_keys_to_config() -> dict:
-    keys_with_env_vars = [key for key in MCP_CONFIGS.keys() if "env" in MCP_CONFIGS[key]]
-    other_keys = [key for key in MCP_CONFIGS.keys() if key not in keys_with_env_vars]
-    
     config = {}
     config["mcpServers"] = {}
-    for key in keys_with_env_vars:
-        config["mcpServers"][key] = MCP_CONFIGS[key]
+    for key, server_config in MCP_CONFIGS.items():
+        config["mcpServers"][key] = server_config.copy()
         if "env" in config["mcpServers"][key]:
-            for env_var in config["mcpServers"][key]["env"]:
-                config["mcpServers"][key]["env"][env_var] = os.getenv(env_var)
-                
-    for key in other_keys:
-        config["mcpServers"][key] = MCP_CONFIGS[key]
+            for env_var_key, env_var_placeholder in config["mcpServers"][key]["env"].items():
+                if env_var_placeholder.startswith("${") and env_var_placeholder.endswith("}"):
+                    env_var_name = env_var_placeholder[2:-1]
+                    config["mcpServers"][key]["env"][env_var_key] = os.getenv(env_var_name)
 
     return config
 
-# Simple function to truncate chat history
 def truncate_history(history: List[Dict[str, str]], max_turns: int = 5) -> List[Dict[str, str]]:
-    """Truncates chat history to the last max_turns."""
-    if len(history) <= max_turns * 2: # Each turn is a user and assistant message
+    if len(history) <= max_turns * 2:
         return history
     return history[-(max_turns * 2):]
 
@@ -80,20 +73,13 @@ def get_user_input(state: State, user_input: str) -> State:
 
 
 @action(reads=["user_input", "chat_history", "current_mode"], writes=["destination"])
-async def route_request(state: State) -> State:
-    user_input = state["user_input"].lower()
+async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     current_mode = state.get("current_mode", "general")
-    chat_history = state.get('chat_history', []) # Read full history
+    chat_history = state.get('chat_history', [])
 
-    # Truncate history for the LLM call
-    truncated_history = truncate_history(chat_history)
-    history_string = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history])
-    
+    # Reverted to the simpler prompt structure
     prompt = (
         f"You are a chatbot. You've been prompted this: {state['user_input']}. "
-        "Pay more attention to the user input but also consider the current mode and conversation history. "
-        f"Your current interaction mode is: {current_mode}. "
-        f"Conversation History:\n{history_string}\n"
         f"You have the capability of responding in the following modes: {', '.join([mode for mode in DESTINATIONS.keys() if mode != 'reset_mode'])}. "
         "Please respond with *only* a single word representing the mode that most accurately "
         "corresponds to the prompt. "
@@ -106,95 +92,68 @@ async def route_request(state: State) -> State:
 
     print(f"Prompt: {prompt}")
 
-
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    result = await llm.ainvoke(prompt)
+    result = await common_llm.ainvoke(prompt)
 
     content = result.content.strip().lower()
     destination = content if content in DESTINATIONS else "unknown"
 
     print(f"Current Mode: {current_mode}, Determined Destination: {destination}")
-    print("Chat History (full): ", chat_history) 
+    print("Chat History (full): ", chat_history)
 
 
     return state.update(destination=destination)
 
 
 @action(reads=["user_input", "chat_history", "current_mode"], writes=["internet_search_results"])
-async def perform_internet_search(state: State) -> State:
+async def perform_internet_search(state: State, internet_agent: MCPAgent) -> State:
     print(">>> Performing internet search...")
     query = state["user_input"]
-    chat_history = state.get("chat_history", []) 
-    current_mode = state.get("current_mode", "general") 
+    chat_history = state.get("chat_history", [])
 
     truncated_history = truncate_history(chat_history)
     history_string = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history])
 
     query_to_send = f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
 
-
-    config = add_keys_to_config()
-
-    client = MCPClient.from_dict(config)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    agent = MCPAgent(llm=llm, client=client, max_steps=5)
-
-    result = await agent.run(query_to_send) 
+    result = await internet_agent.run(query_to_send)
 
     return state.update(internet_search_results=result)
 
 
-@action(reads=["user_input", "chat_history", "current_mode"], writes=["github_search_results"]) 
-async def perform_github_search(state: State) -> State:
+@action(reads=["user_input", "chat_history", "current_mode"], writes=["github_search_results"])
+async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
     print(">>> Searching GitHub...")
     query = state["user_input"]
-    chat_history = state.get("chat_history", []) 
-    current_mode = state.get("current_mode", "general") 
+    chat_history = state.get("chat_history", [])
 
     truncated_history = truncate_history(chat_history)
     history_string = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history])
 
     query_to_send = f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
 
-
-    config = add_keys_to_config()
-
-    #TODO: Shouldnt we be subsetting the MCP server for each agaent since we are in that (Burr) state?
-    client = MCPClient.from_dict(config)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    agent = MCPAgent(llm=llm, client=client, max_steps=5)
-
-    result = await agent.run(query_to_send) 
+    result = await github_agent.run(query_to_send)
 
     return state.update(github_search_results=result)
 
-@action(reads=["user_input", "chat_history", "current_mode"], writes=["atlassian_search_results"]) 
-async def perform_atlassian_search(state: State) -> State:
+@action(reads=["user_input", "chat_history", "current_mode"], writes=["atlassian_search_results"])
+async def perform_atlassian_search(state: State, atlassian_agent: MCPAgent) -> State:
     print(">>> Searching JIRA...")
     query = state["user_input"]
-    chat_history = state.get("chat_history", []) 
-    current_mode = state.get("current_mode", "general") 
+    chat_history = state.get("chat_history", [])
 
     truncated_history = truncate_history(chat_history)
     history_string = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history])
 
     query_to_send = f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
 
-
-    config = add_keys_to_config()
-
-    client = MCPClient.from_dict(config)
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    agent = MCPAgent(llm=llm, client=client, max_steps=5)
-
-    result = await agent.run(query_to_send) 
+    result = await atlassian_agent.run(query_to_send)
 
     return state.update(atlassian_search_results=result)
 
 @action(reads=["user_input", "chat_history"], writes=["general_ai_response"])
-async def generate_general_ai_response(state: State) -> State:
+async def generate_general_ai_response(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Generating general AI response...")
-    chat_history = state.get("chat_history", []) 
+    chat_history = state.get("chat_history", [])
 
     truncated_history = truncate_history(chat_history)
 
@@ -204,8 +163,7 @@ async def generate_general_ai_response(state: State) -> State:
         {"role": "user", "content": state["user_input"]}
     ]
 
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    result = await llm.ainvoke(messages)
+    result = await common_llm.ainvoke(messages)
     response_content = result.content
 
     return state.update(general_ai_response=response_content)
@@ -226,7 +184,7 @@ def prompt_for_more(state: State) -> State:
 
 
 @action(
-    reads=["user_input", "internet_search_results", "github_search_results", "general_ai_response", "chat_history", "destination"],
+    reads=["user_input", "internet_search_results", "github_search_results", "general_ai_response", "chat_history", "destination", "atlassian_search_results"],
     writes=["chat_history", "final_response", "current_mode"]
 )
 def generate_final_response(state: State) -> State:
@@ -248,7 +206,6 @@ def generate_final_response(state: State) -> State:
     elif general_ai_resp:
         final_response_content = general_ai_resp
 
-    # Add the user input and the assistant response to the chat history
     user_message = {"role": "user", "content": state["user_input"]}
     assistant_message = {"role": "assistant", "content": final_response_content}
 
@@ -268,7 +225,7 @@ def generate_final_response(state: State) -> State:
         new_current_mode = "general"
     elif destination == "reset_mode":
          new_current_mode = "general"
-    elif destination == "unknown": 
+    elif destination == "unknown":
          new_current_mode = "general"
 
 
@@ -309,15 +266,31 @@ def present_response(state: State) -> State:
         atlassian_search_results=atlassian_results_to_clear
     )
 
+
+common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
+full_mcp_config = add_keys_to_config()
+
+github_mcp_config = {"mcpServers": {"github": full_mcp_config["mcpServers"]["github"]}}
+github_mcp_client = MCPClient.from_dict(github_mcp_config)
+github_mcp_agent = MCPAgent(llm=common_llm, client=github_mcp_client, max_steps=5)
+
+brave_mcp_config = {"mcpServers": {"brave-search": full_mcp_config["mcpServers"]["brave-search"]}}
+brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
+brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client, max_steps=5)
+
+atlassian_mcp_config = {"mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}}
+atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
+atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
+
 graph = (
     graph.GraphBuilder()
     .with_actions(
         get_user_input=get_user_input,
-        route_request=route_request,
-        perform_internet_search=perform_internet_search,
-        perform_atlassian_search=perform_atlassian_search,
-        perform_github_search=perform_github_search,
-        generate_general_ai_response=generate_general_ai_response,
+        route_request=route_request.bind(common_llm=common_llm),
+        perform_internet_search=perform_internet_search.bind(internet_agent=brave_mcp_agent),
+        perform_github_search=perform_github_search.bind(github_agent=github_mcp_agent),
+        perform_atlassian_search=perform_atlassian_search.bind(atlassian_agent=atlassian_mcp_agent),
+        generate_general_ai_response=generate_general_ai_response.bind(common_llm=common_llm),
         prompt_for_more=prompt_for_more,
         generate_final_response=generate_final_response,
         present_response=present_response,
@@ -335,7 +308,7 @@ graph = (
             ["perform_internet_search", "perform_github_search", "perform_atlassian_search", "generate_general_ai_response"],
             "generate_final_response"
         ),
-        
+
         ("generate_final_response", "present_response"),
         ("present_response", "get_user_input"),
         ("prompt_for_more", "get_user_input")
@@ -352,6 +325,7 @@ def base_application(
     if hooks is None:
         hooks = []
     tracker = LocalTrackingClient(project=project_id, storage_dir=storage_dir)
+
     return (
         ApplicationBuilder()
         .with_graph(graph)
@@ -366,6 +340,7 @@ def base_application(
         .with_identifiers(app_id=app_id)
         .build()
     )
+
 
 def application(
     app_id: Optional[str] = None,
