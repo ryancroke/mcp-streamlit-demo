@@ -16,6 +16,42 @@ def render_chat_message(chat_item: dict):
     with st.chat_message(role):
         st.write(content)
 
+def show_server_status(burr_app):
+    """Display server status in the sidebar with indicators."""
+    
+    # Get current mode from Burr app state
+    current_mode = burr_app.state.get("current_mode", "general")
+    
+    # Define all available servers
+    servers = {
+        "General AI": "general",
+        "Internet Search": "internet_search",
+        "GitHub": "github_search",
+        "Atlassian": "atlassian_search"
+    }
+    
+    # Create the sidebar
+    st.sidebar.title("MCP Server Status")
+    
+    # List all servers with indicators
+    for server_name, mode in servers.items():
+        # Check if this server is active
+        is_active = current_mode == mode
+        
+        # Create the indicator color
+        indicator = "🟢" if is_active else "⚪"
+        
+        # Show the server with its indicator
+        st.sidebar.markdown(f"{indicator} {server_name}")
+        
+    # Add a divider
+    st.sidebar.divider()
+    
+    # Optionally show the current query being processed
+    user_input = burr_app.state.get("user_input", "")
+    if user_input:
+        st.sidebar.caption("Current query:")
+        st.sidebar.text(user_input)
 
 def initialize_burr_app() -> burr.core.Application:
     # First, ensure the agents are created only once and stored in session state
@@ -39,6 +75,8 @@ def initialize_burr_app() -> burr.core.Application:
 async def main():
     st.title("Chatbot example with Burr and MCP")
     burr_app = initialize_burr_app()
+    
+    show_server_status(burr_app)
 
     for chat_message in burr_app.state.get("chat_history", []):
         render_chat_message(chat_message)

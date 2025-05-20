@@ -1,6 +1,6 @@
 # MCP-streamlit-demo
 
-Brief description of what your project does.
+![documentation/streamlit-demo.png](documentation/streamlit-demo.png)
 
 ## Prerequisites
 
@@ -67,7 +67,6 @@ otherwise
 streamlit run simple_app.py
 ``` 
 # ToDo
-1. Abstract out servers. Starting them every time is running into a problem
 1. There is information bleed in the app. Hunt this down.
 1. Find other improvements. 
 1. Add in sidebar to tell you whcih state you are in. 
