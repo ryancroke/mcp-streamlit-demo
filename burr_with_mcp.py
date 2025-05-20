@@ -70,6 +70,8 @@ def add_keys_to_config() -> dict:
     print(config)
     return config
 
+full_mcp_config = add_keys_to_config()
+print(full_mcp_config)
 
 def truncate_history(
     history: List[Dict[str, str]], max_turns: int = 5
@@ -119,10 +121,29 @@ async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     reads=["user_input", "chat_history", "current_mode"],
     writes=["internet_search_results"],
 )
-async def perform_internet_search(state: State, internet_agent: MCPAgent) -> State:
+async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Performing internet search...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
+
+    # Create a fresh brave search MCP client and agent
+    brave_mcp_config = {
+        "mcpServers": {
+            "brave-search": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+                "env": {"BRAVE_API_KEY": os.getenv("BRAVE_API_KEY")},
+            }
+        }
+    }
+    
+    # Create a new client and agent for this request
+    brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
+    brave_mcp_agent = MCPAgent(
+        llm=common_llm, 
+        client=brave_mcp_client, 
+        max_steps=20
+    )
 
     truncated_history = truncate_history(chat_history)
     history_string = "\n".join(
@@ -133,7 +154,18 @@ async def perform_internet_search(state: State, internet_agent: MCPAgent) -> Sta
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
 
-    result = await internet_agent.run(query_to_send)
+    try:
+        result = await brave_mcp_agent.run(query_to_send)
+    except Exception as e:
+        print(f"Internet search error: {e}")
+        result = f"I'm sorry, but I couldn't access the internet search at the moment. Please try again later or ask another question."
+    
+    # Clean up resources if needed
+    try:
+        if hasattr(brave_mcp_client, 'close_all_sessions'):
+            await brave_mcp_client.close_all_sessions()
+    except Exception as e:
+        print(f"Error cleaning up brave client: {e}")
 
     return state.update(internet_search_results=result)
 
@@ -142,7 +174,7 @@ async def perform_internet_search(state: State, internet_agent: MCPAgent) -> Sta
     reads=["user_input", "chat_history", "current_mode"],
     writes=["github_search_results"],
 )
-async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
+async def perform_github_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Searching GitHub...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -155,8 +187,24 @@ async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
     query_to_send = (
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
+    
+    # Create a fresh brave search MCP client and agent
+    github_mcp_config = {
+        "mcpServers": {
+            "github": full_mcp_config["mcpServers"]["github"]
+        }
+    }
 
-    result = await github_agent.run(query_to_send)
+    
+    # Create a new client and agent for this request
+    github_mcp_client = MCPClient.from_dict(github_mcp_config)
+    github_mcp_agent = MCPAgent(
+        llm=common_llm, 
+        client=github_mcp_client, 
+        max_steps=20
+    )
+
+    result = await github_mcp_agent.run(query_to_send)
 
     return state.update(github_search_results=result)
 
@@ -165,7 +213,7 @@ async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
     reads=["user_input", "chat_history", "current_mode"],
     writes=["atlassian_search_results"],
 )
-async def perform_atlassian_search(state: State, atlassian_agent: MCPAgent) -> State:
+async def perform_atlassian_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Searching JIRA...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -178,8 +226,25 @@ async def perform_atlassian_search(state: State, atlassian_agent: MCPAgent) -> S
     query_to_send = (
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
+    
+    # Create a fresh brave search MCP client and agent
+    atlassian_mcp_config = full_mcp_config["mcpServers"]["atlassian"]
+    atlassian_mcp_config = {
+        "mcpServers": {
+            "github": full_mcp_config["mcpServers"]["atlassian"]
+        }
+    }
 
-    result = await atlassian_agent.run(query_to_send)
+    
+    # Create a new client and agent for this request
+    atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
+    atlassian_mcp_agent = MCPAgent(
+        llm=common_llm, 
+        client=atlassian_mcp_client, 
+        max_steps=20
+    )
+
+    result = await atlassian_mcp_agent.run(query_to_send)
 
     return state.update(atlassian_search_results=result)
 
@@ -323,38 +388,34 @@ def present_response(state: State) -> State:
 
 
 common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
-full_mcp_config = add_keys_to_config()
+
 
 github_mcp_config = {"mcpServers": {"github": full_mcp_config["mcpServers"]["github"]}}
 github_mcp_client = MCPClient.from_dict(github_mcp_config)
 github_mcp_agent = MCPAgent(
-    llm=common_llm, client=github_mcp_client, verbose=True, max_steps=10
+    llm=common_llm, client=github_mcp_client, verbose=True, use_server_manager=True,max_steps=30
 )
 
 brave_mcp_config = {
     "mcpServers": {"brave-search": full_mcp_config["mcpServers"]["brave-search"]}
 }
 brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
-brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client, max_steps=5)
+brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client,use_server_manager=True, max_steps=30)
 
 atlassian_mcp_config = {
     "mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}
 }
 atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
-atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
+atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, use_server_manager=True, max_steps=30)
 
 graph = (
     graph.GraphBuilder()
     .with_actions(
         get_user_input=get_user_input,
         route_request=route_request.bind(common_llm=common_llm),
-        perform_internet_search=perform_internet_search.bind(
-            internet_agent=brave_mcp_agent
-        ),
-        perform_github_search=perform_github_search.bind(github_agent=github_mcp_agent),
-        perform_atlassian_search=perform_atlassian_search.bind(
-            atlassian_agent=atlassian_mcp_agent
-        ),
+        perform_internet_search=perform_internet_search.bind(common_llm=common_llm),
+        perform_github_search=perform_github_search.bind(common_llm=common_llm),
+        perform_atlassian_search=perform_atlassian_search.bind(common_llm=common_llm),
         generate_general_ai_response=generate_general_ai_response.bind(
             common_llm=common_llm
         ),
@@ -432,3 +493,17 @@ def application(
     hooks: Optional[List[LifecycleAdapter]] = None,
 ) -> Application:
     return base_application(hooks, app_id, storage_dir, project_id=project_id)
+
+
+async def cleanup_mcp_connections():
+    """Clean up MCP client connections properly."""
+    try:
+        if hasattr(github_mcp_client, 'sessions') and github_mcp_client.sessions:
+            await github_mcp_client.close_all_sessions()
+        if hasattr(brave_mcp_client, 'sessions') and brave_mcp_client.sessions:
+            await brave_mcp_client.close_all_sessions()
+        if hasattr(atlassian_mcp_client, 'sessions') and atlassian_mcp_client.sessions:
+            await atlassian_mcp_client.close_all_sessions()
+        print("MCP connections cleaned up")
+    except Exception as e:
+        print(f"Error cleaning up MCP connections: {e}")
