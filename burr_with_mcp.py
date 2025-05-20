@@ -1,7 +1,9 @@
 import sys
 import asyncio
 import os
-from typing import List, Optional, Dict
+import functools
+import openai
+from typing import List, Optional, Dict, Tuple
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from mcp_use import MCPAgent, MCPClient
@@ -21,6 +23,7 @@ DESTINATIONS = {
     "search_github": "github_search",
     "search_atlassian": "atlassian_search",
     "general_ai_response": "general",
+    "email_assistant": "email_assistant",  # Add this new mode
     "unknown": "unknown",
     "reset_mode": "general",
 }
@@ -70,8 +73,6 @@ def add_keys_to_config() -> dict:
     print(config)
     return config
 
-full_mcp_config = add_keys_to_config()
-print(full_mcp_config)
 
 def truncate_history(
     history: List[Dict[str, str]], max_turns: int = 5
@@ -81,17 +82,38 @@ def truncate_history(
     return history[-(max_turns * 2) :]
 
 
+@functools.lru_cache
+def _get_openai_client():
+    openai_client = openai.Client()
+    return openai_client
+
+
 @action(reads=[], writes=["user_input"])
 def get_user_input(state: State, user_input: str) -> State:
     return state.update(user_input=user_input)
 
 
-@action(reads=["user_input", "chat_history", "current_mode"], writes=["destination"])
+@action(reads=["user_input", "chat_history", "current_mode", "email_instructions_phase"], writes=["destination"])
 async def route_request(state: State, common_llm: ChatOpenAI) -> State:
+    # Check if we're in the email assistant flow
+    if state.get("email_instructions_phase"):
+        # Route based on the current phase of email assistant
+        email_phase = state.get("email_instructions_phase")
+        if email_phase == "collect_email":
+            return state.update(destination="collect_email_data")
+        elif email_phase == "collect_instructions":
+            return state.update(destination="collect_email_data")
+        elif email_phase == "collect_clarifications":
+            return state.update(destination="collect_clarifications")
+        elif email_phase == "formulate_draft":
+            return state.update(destination="formulate_draft")
+        elif email_phase == "feedback_or_finalize":
+            return state.update(destination="process_feedback")
+        
+    # Regular routing logic
     current_mode = state.get("current_mode", "general")
     chat_history = state.get("chat_history", [])
 
-    # Reverted to the simpler prompt structure
     prompt = (
         f"You are a chatbot. You've been prompted this: {state['user_input']}. "
         f"You have the capability of responding in the following modes: {', '.join([mode for mode in DESTINATIONS.keys() if mode != 'reset_mode'])}. "
@@ -101,6 +123,8 @@ async def route_request(state: State, common_llm: ChatOpenAI) -> State:
         "the mode would be 'search_internet'. If the prompt is 'what is the capital of France', the mode would be 'general_ai_response'."
         "If the prompt is about GitHub, the mode would be 'search_github'. If the prompt is about Brave Search, the mode would be 'search_internet'."
         "If the prompt is about JIRA, the mode would be 'search_atlassian'."
+        "If the prompt mentions wanting help with emails, writing emails, or creating email responses, "
+        "the mode would be 'email_assistant'."
         "If none of these modes apply, please respond with 'unknown'."
     )
 
@@ -121,29 +145,10 @@ async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     reads=["user_input", "chat_history", "current_mode"],
     writes=["internet_search_results"],
 )
-async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State:
+async def perform_internet_search(state: State, internet_agent: MCPAgent) -> State:
     print(">>> Performing internet search...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
-
-    # Create a fresh brave search MCP client and agent
-    brave_mcp_config = {
-        "mcpServers": {
-            "brave-search": {
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-                "env": {"BRAVE_API_KEY": os.getenv("BRAVE_API_KEY")},
-            }
-        }
-    }
-    
-    # Create a new client and agent for this request
-    brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
-    brave_mcp_agent = MCPAgent(
-        llm=common_llm, 
-        client=brave_mcp_client, 
-        max_steps=20
-    )
 
     truncated_history = truncate_history(chat_history)
     history_string = "\n".join(
@@ -154,18 +159,7 @@ async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
 
-    try:
-        result = await brave_mcp_agent.run(query_to_send)
-    except Exception as e:
-        print(f"Internet search error: {e}")
-        result = f"I'm sorry, but I couldn't access the internet search at the moment. Please try again later or ask another question."
-    
-    # Clean up resources if needed
-    try:
-        if hasattr(brave_mcp_client, 'close_all_sessions'):
-            await brave_mcp_client.close_all_sessions()
-    except Exception as e:
-        print(f"Error cleaning up brave client: {e}")
+    result = await internet_agent.run(query_to_send)
 
     return state.update(internet_search_results=result)
 
@@ -174,7 +168,7 @@ async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State
     reads=["user_input", "chat_history", "current_mode"],
     writes=["github_search_results"],
 )
-async def perform_github_search(state: State, common_llm: ChatOpenAI) -> State:
+async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
     print(">>> Searching GitHub...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -187,24 +181,8 @@ async def perform_github_search(state: State, common_llm: ChatOpenAI) -> State:
     query_to_send = (
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
-    
-    # Create a fresh brave search MCP client and agent
-    github_mcp_config = {
-        "mcpServers": {
-            "github": full_mcp_config["mcpServers"]["github"]
-        }
-    }
 
-    
-    # Create a new client and agent for this request
-    github_mcp_client = MCPClient.from_dict(github_mcp_config)
-    github_mcp_agent = MCPAgent(
-        llm=common_llm, 
-        client=github_mcp_client, 
-        max_steps=20
-    )
-
-    result = await github_mcp_agent.run(query_to_send)
+    result = await github_agent.run(query_to_send)
 
     return state.update(github_search_results=result)
 
@@ -213,7 +191,7 @@ async def perform_github_search(state: State, common_llm: ChatOpenAI) -> State:
     reads=["user_input", "chat_history", "current_mode"],
     writes=["atlassian_search_results"],
 )
-async def perform_atlassian_search(state: State, common_llm: ChatOpenAI) -> State:
+async def perform_atlassian_search(state: State, atlassian_agent: MCPAgent) -> State:
     print(">>> Searching JIRA...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -226,25 +204,8 @@ async def perform_atlassian_search(state: State, common_llm: ChatOpenAI) -> Stat
     query_to_send = (
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
-    
-    # Create a fresh brave search MCP client and agent
-    atlassian_mcp_config = full_mcp_config["mcpServers"]["atlassian"]
-    atlassian_mcp_config = {
-        "mcpServers": {
-            "github": full_mcp_config["mcpServers"]["atlassian"]
-        }
-    }
 
-    
-    # Create a new client and agent for this request
-    atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
-    atlassian_mcp_agent = MCPAgent(
-        llm=common_llm, 
-        client=atlassian_mcp_client, 
-        max_steps=20
-    )
-
-    result = await atlassian_mcp_agent.run(query_to_send)
+    result = await atlassian_agent.run(query_to_send)
 
     return state.update(atlassian_search_results=result)
 
@@ -387,41 +348,301 @@ def present_response(state: State) -> State:
     )
 
 
-common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
+# Email Assistant Actions
 
+@action(reads=["user_input", "chat_history"], writes=["chat_history", "email_instructions_phase"])
+def start_email_assistant(state: State) -> State:
+    """Starts the email assistant process"""
+    
+    response = "To use the Email Assistant, I'll need two pieces of information:\n1. The email you want to respond to\n2. Instructions for how you want to respond\n\nPlease paste the email text first."
+    
+    updated_history = state.get("chat_history", []) + [
+        {"role": "user", "content": state["user_input"]},
+        {"role": "assistant", "content": response},
+    ]
+    
+    return state.update(
+        chat_history=updated_history,
+        email_instructions_phase="collect_email"
+    )
+
+
+@action(reads=["user_input", "email_instructions_phase"], writes=["email_content", "email_instructions", "email_instructions_phase", "chat_history"])
+def collect_email_data(state: State) -> State:
+    """Collects email content and instructions based on the phase we're in"""
+    
+    # Get the current phase
+    phase = state.get("email_instructions_phase", "collect_email")
+    
+    if phase == "collect_email":
+        # Save the email content
+        email_content = state["user_input"]
+        response = "Thanks for the email content. Now, please provide your instructions for how you want to respond to this email."
+        
+        # Add response to chat history
+        updated_history = state.get("chat_history", []) + [
+            {"role": "user", "content": state["user_input"]},
+            {"role": "assistant", "content": response},
+        ]
+        
+        return state.update(
+            chat_history=updated_history,
+            email_content=email_content,
+            email_instructions="",  # Initialize with empty string to satisfy the writes requirement
+            email_instructions_phase="collect_instructions"
+        )
+    
+    elif phase == "collect_instructions":
+        # Save the instructions
+        email_instructions = state["user_input"]
+        response = "Thank you. I'm now going to help you draft a response based on these instructions."
+        
+        # Add response to chat history
+        updated_history = state.get("chat_history", []) + [
+            {"role": "user", "content": state["user_input"]},
+            {"role": "assistant", "content": response},
+        ]
+        
+        return state.update(
+            chat_history=updated_history,
+            email_instructions=email_instructions,
+            email_instructions_phase="determine_clarifications"
+        )
+    
+    return state
+
+
+@action(reads=["email_content", "email_instructions"], writes=["clarification_questions", "email_instructions_phase", "chat_history"])
+def determine_clarifications(state: State) -> State:
+    """Determines if clarification is needed for the email response"""
+    email_content = state["email_content"]
+    email_instructions = state["email_instructions"]
+    
+    client = _get_openai_client()
+    result = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a chatbot that has the task of generating responses to an email on behalf of a user. ",
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"The email you are to respond to is: {email_content}."
+                    f"Your instructions are: {email_instructions}."
+                    "Your first task is to ask any clarifying questions for the user"
+                    " who is asking you to respond to this email. These clarifying questions are for the user, "
+                    "*not* for the original sender of the email. Please "
+                    "generate a list of at most 3 questions (and you really can do less -- 2, 1, or even none are OK! joined by newlines, included only if you feel that you could leverage "
+                    "clarification (my time is valuable)."
+                    "The questions, joined by newlines, must be the only text you return. If you do not need clarification, return an empty string."
+                ),
+            },
+        ],
+    )
+    content = result.choices[0].message.content
+    all_questions = content.split("\n") if content else []
+    
+    # Add response to chat history if there are questions
+    if all_questions and all_questions[0].strip():
+        questions_text = "\n".join(all_questions)
+        response = f"I need a few clarifications before drafting the response:\n\n{questions_text}\n\nPlease provide answers to these questions."
+        
+        updated_history = state.get("chat_history", []) + [
+            {"role": "assistant", "content": response},
+        ]
+        
+        return state.update(
+            chat_history=updated_history,
+            clarification_questions=all_questions,
+            email_instructions_phase="collect_clarifications"
+        )
+    else:
+        # No questions needed, go straight to drafting
+        return state.update(
+            clarification_questions=[],
+            email_instructions_phase="formulate_draft"
+        )
+
+
+@action(reads=["user_input", "clarification_questions"], writes=["clarification_answers", "email_instructions_phase", "chat_history"])
+def collect_clarifications(state: State) -> State:
+    """Collects answers to clarification questions"""
+    
+    # Get the user's answers
+    clarification_answers = [state["user_input"]]  # Simple case - just use the whole input as one answer
+    
+    # Add to chat history
+    updated_history = state.get("chat_history", []) + [
+        {"role": "user", "content": state["user_input"]},
+    ]
+    
+    return state.update(
+        chat_history=updated_history,
+        clarification_answers=clarification_answers,
+        email_instructions_phase="formulate_draft"
+    )
+
+
+@action(reads=["email_content", "email_instructions", "clarification_questions", "clarification_answers"], 
+        writes=["current_draft", "draft_history", "email_instructions_phase", "chat_history"])
+def formulate_draft(state: State) -> State:
+    """Formulates a draft email response"""
+    
+    email_content = state["email_content"]
+    email_instructions = state["email_instructions"]
+    
+    # Format clarification Q&A if they exist
+    clarification_answers_formatted_q_a = ""
+    if state.get("clarification_questions") and state.get("clarification_answers"):
+        clarification_answers_formatted_q_a = "\n".join(
+            [
+                f"Q: {q}\nA: {a}"
+                for q, a in zip(
+                    state["clarification_questions"], state.get("clarification_answers", [])
+                )
+            ]
+        )
+    
+    client = _get_openai_client()
+    
+    instructions = [
+        f"The email you are to respond to is: {email_content}.",
+        f"Your instructions are: {email_instructions}.",
+    ]
+    
+    if clarification_answers_formatted_q_a:
+        instructions.append("You have already asked the following questions and received the following answers: ")
+        instructions.append(clarification_answers_formatted_q_a)
+    
+    draft_history = state.get("draft_history", [])
+    if draft_history:
+        instructions.append("Your previous draft was: ")
+        instructions.append(draft_history[-1])
+        instructions.append(
+            "you received the following feedback, please incorporate this into your response: "
+        )
+        instructions.append(state.get("feedback", ""))
+    
+    instructions.append("Please generate a draft response using all this information!")
+    prompt = " ".join(instructions)
+
+    result = client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a chatbot that has the task of generating responses to an email. ",
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    
+    draft_content = result.choices[0].message.content
+    
+    # Add to chat history
+    response = f"Here's my draft email response:\n\n{draft_content}\n\nWhat do you think? Would you like me to make any changes?"
+    
+    updated_history = state.get("chat_history", []) + [
+        {"role": "assistant", "content": response},
+    ]
+    
+    # Update draft history
+    new_draft_history = draft_history + [draft_content] if draft_history else [draft_content]
+    
+    return state.update(
+        chat_history=updated_history,
+        current_draft=draft_content,
+        draft_history=new_draft_history,
+        email_instructions_phase="feedback_or_finalize"
+    )
+
+
+@action(reads=["user_input"], writes=["feedback", "email_instructions_phase", "chat_history", "current_mode"])
+def process_feedback(state: State) -> State:
+    """Processes feedback for the draft email"""
+    
+    user_input = state["user_input"].lower()
+    
+    # Check if the user wants to finalize or provide feedback
+    if any(word in user_input for word in ["good", "great", "perfect", "finalize", "done", "looks good"]):
+        # User is satisfied with the draft
+        response = "I'm glad you're happy with the draft! The final email response is ready to send."
+        
+        updated_history = state.get("chat_history", []) + [
+            {"role": "user", "content": state["user_input"]},
+            {"role": "assistant", "content": response},
+        ]
+        
+        return state.update(
+            chat_history=updated_history,
+            email_instructions_phase=None,  # Clear the email state
+            current_mode="general"  # Return to general mode
+        )
+    else:
+        # User is providing feedback
+        response = "Thank you for your feedback. I'll revise the draft accordingly."
+        
+        updated_history = state.get("chat_history", []) + [
+            {"role": "user", "content": state["user_input"]},
+            {"role": "assistant", "content": response},
+        ]
+        
+        return state.update(
+            chat_history=updated_history,
+            feedback=state["user_input"],
+            email_instructions_phase="formulate_draft"  # Go back to drafting
+        )
+
+
+common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
+full_mcp_config = add_keys_to_config()
 
 github_mcp_config = {"mcpServers": {"github": full_mcp_config["mcpServers"]["github"]}}
 github_mcp_client = MCPClient.from_dict(github_mcp_config)
 github_mcp_agent = MCPAgent(
-    llm=common_llm, client=github_mcp_client, verbose=True, use_server_manager=True,max_steps=30
+    llm=common_llm, client=github_mcp_client, verbose=True, max_steps=10
 )
 
 brave_mcp_config = {
     "mcpServers": {"brave-search": full_mcp_config["mcpServers"]["brave-search"]}
 }
 brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
-brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client,use_server_manager=True, max_steps=30)
+brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client, max_steps=5)
 
 atlassian_mcp_config = {
     "mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}
 }
 atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
-atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, use_server_manager=True, max_steps=30)
+atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
 
 graph = (
     graph.GraphBuilder()
     .with_actions(
         get_user_input=get_user_input,
         route_request=route_request.bind(common_llm=common_llm),
-        perform_internet_search=perform_internet_search.bind(common_llm=common_llm),
-        perform_github_search=perform_github_search.bind(common_llm=common_llm),
-        perform_atlassian_search=perform_atlassian_search.bind(common_llm=common_llm),
+        perform_internet_search=perform_internet_search.bind(
+            internet_agent=brave_mcp_agent
+        ),
+        perform_github_search=perform_github_search.bind(github_agent=github_mcp_agent),
+        perform_atlassian_search=perform_atlassian_search.bind(
+            atlassian_agent=atlassian_mcp_agent
+        ),
         generate_general_ai_response=generate_general_ai_response.bind(
             common_llm=common_llm
         ),
         prompt_for_more=prompt_for_more,
         generate_final_response=generate_final_response,
         present_response=present_response,
+        
+        # Email Assistant actions
+        start_email_assistant=start_email_assistant,
+        collect_email_data=collect_email_data,
+        determine_clarifications=determine_clarifications,
+        collect_clarifications=collect_clarifications,
+        formulate_draft=formulate_draft,
+        process_feedback=process_feedback,
     )
     .with_transitions(
         ("get_user_input", "route_request"),
@@ -442,7 +663,28 @@ graph = (
             when(destination="general_ai_response"),
         ),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
+        
+        # Email Assistant transitions
+        ("route_request", "start_email_assistant", when(destination="email_assistant")),
+        ("route_request", "collect_email_data", when(destination="collect_email_data")),
+        ("route_request", "collect_clarifications", when(destination="collect_clarifications")),
+        ("route_request", "formulate_draft", when(destination="formulate_draft")),
+        ("route_request", "process_feedback", when(destination="process_feedback")),
+        
+        # After each email assistant step, we need to return to route_request
+        ("start_email_assistant", "get_user_input"),
+        ("collect_email_data", "get_user_input"),
+        ("determine_clarifications", "get_user_input"),
+        ("collect_clarifications", "formulate_draft"),
+        ("formulate_draft", "get_user_input"),
+        ("process_feedback", "get_user_input"),
+        
+        # For the case where we need to determine clarifications after collecting data
+        ("collect_email_data", "determine_clarifications", when(email_instructions_phase="determine_clarifications")),
+        
+        # Default fallback
         ("route_request", "prompt_for_more", default),
+        
         (
             [
                 "perform_internet_search",
@@ -493,17 +735,3 @@ def application(
     hooks: Optional[List[LifecycleAdapter]] = None,
 ) -> Application:
     return base_application(hooks, app_id, storage_dir, project_id=project_id)
-
-
-async def cleanup_mcp_connections():
-    """Clean up MCP client connections properly."""
-    try:
-        if hasattr(github_mcp_client, 'sessions') and github_mcp_client.sessions:
-            await github_mcp_client.close_all_sessions()
-        if hasattr(brave_mcp_client, 'sessions') and brave_mcp_client.sessions:
-            await brave_mcp_client.close_all_sessions()
-        if hasattr(atlassian_mcp_client, 'sessions') and atlassian_mcp_client.sessions:
-            await atlassian_mcp_client.close_all_sessions()
-        print("MCP connections cleaned up")
-    except Exception as e:
-        print(f"Error cleaning up MCP connections: {e}")
