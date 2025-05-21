@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from mcp_use import MCPAgent, MCPClient
 
-from burr.core import Application, ApplicationBuilder, State, default, when, graph
+from burr.core import Application, ApplicationBuilder, State, default, when, graph, expr
 from burr.core.action import action
 from burr.lifecycle import LifecycleAdapter
 from burr.tracking import LocalTrackingClient
@@ -104,7 +104,7 @@ def get_user_input(state: State, user_input: str) -> State:
     return state.update(user_input=user_input)
 
 
-@action(reads=["user_input", "chat_history", "current_mode", "email_instructions_phase"], writes=["destination"])
+@action(reads=["user_input", "chat_history", "current_mode"], writes=["destination"])
 async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     # Check if we're in the email assistant flow
     if state.get("email_instructions_phase"):
@@ -411,9 +411,7 @@ def present_response(state: State) -> State:
         knowledge_base_results=knowledge_base_results_to_clear,
     )
 
-
-# Email Assistant Actions
-
+# Replace existing email assistant actions with the improved version
 @action(reads=["user_input", "chat_history"], writes=["chat_history", "email_instructions_phase"])
 def start_email_assistant(state: State) -> State:
     """Starts the email assistant process"""
@@ -659,7 +657,6 @@ def process_feedback(state: State) -> State:
             email_instructions_phase="formulate_draft"  # Go back to drafting
         )
 
-
 common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
 full_mcp_config = add_keys_to_config()
 
@@ -730,12 +727,27 @@ graph = (
         ("route_request", "search_knowledge_base", when(destination="search_knowledge_base")),
         ("route_request", "generate_general_ai_response", when(destination="general_ai_response")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
+        
+        # Email Assistant transitions
         ("route_request", "start_email_assistant", when(destination="email_assistant")),
         ("route_request", "collect_email_data", when(destination="collect_email_data")),
         ("route_request", "collect_clarifications", when(destination="collect_clarifications")),
         ("route_request", "formulate_draft", when(destination="formulate_draft")),
         ("route_request", "process_feedback", when(destination="process_feedback")),
-        ("route_request", "prompt_for_more", default),  # Default fallback last
+        
+        # After each email assistant step, we need to return to route_request
+        ("start_email_assistant", "get_user_input"),
+        ("collect_email_data", "get_user_input"),
+        ("determine_clarifications", "get_user_input"),
+        ("collect_clarifications", "formulate_draft"),
+        ("formulate_draft", "get_user_input"),
+        ("process_feedback", "get_user_input"),
+        
+        # For the case where we need to determine clarifications after collecting data
+        ("collect_email_data", "determine_clarifications", when(email_instructions_phase="determine_clarifications")),
+        
+        # Default fallback
+        ("route_request", "prompt_for_more", default),
         
         # Search actions to final response
         ("perform_internet_search", "generate_final_response"),
@@ -743,15 +755,6 @@ graph = (
         ("perform_atlassian_search", "generate_final_response"),
         ("search_knowledge_base", "generate_final_response"),
         ("generate_general_ai_response", "generate_final_response"),
-        
-        # Email assistant flow
-        ("start_email_assistant", "get_user_input"),
-        ("collect_email_data", "get_user_input"),
-        ("collect_email_data", "determine_clarifications", when(email_instructions_phase="determine_clarifications")),
-        ("determine_clarifications", "get_user_input"),
-        ("collect_clarifications", "formulate_draft"),
-        ("formulate_draft", "get_user_input"),
-        ("process_feedback", "get_user_input"),
         
         # Final response and loop back
         ("generate_final_response", "present_response"),
