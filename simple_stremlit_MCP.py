@@ -94,14 +94,11 @@ async def main():
         async for action, result, state in burr_app.aiterate(
             inputs={"user_input": prompt},
             halt_after=[
-            "generate_final_response", 
-            "prompt_for_more",
-            "start_email_assistant",
-            "collect_email_data", 
-            "determine_clarifications",
-            "formulate_draft",
-            "process_feedback"
-        ]
+                "present_response",      # For general responses
+                "prompt_for_more",       # For when more info is needed
+                "get_email_data",        # After prompting for email data
+                "create_reply_email"     # After processing the email and instructions
+            ]
         ):
             # Debug print kept to see action execution
             print(f">>>> Executing Burr Action: {action.name}")

@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 from mcp_use import MCPAgent, MCPClient
 
 from burr.core import Application, ApplicationBuilder, State, default, when, graph, expr
+from burr.core.application import ApplicationContext
 from burr.core.action import action
 from burr.lifecycle import LifecycleAdapter
 from burr.tracking import LocalTrackingClient
@@ -112,30 +113,19 @@ def get_user_input(state: State, user_input: str) -> State:
     return state.update(user_input=user_input)
 
 
-@action(reads=["user_input", "chat_history", "current_mode", "email_assistant_state"], 
+
+@action(reads=["user_input", "chat_history", "current_mode", "email_state"], 
         writes=["destination"])
 async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     """
     Routes user input to the appropriate destination based on content analysis.
-    
-    This action serves as the central router for the chatbot, determining which
-    subprocess should handle the user's request. It preserves subprocess integrity
-    by maintaining the flow of ongoing processes like the email assistant.
-    
-    Args:
-        state: The current application state
-        common_llm: The language model for intent classification
-        
-    Returns:
-        Updated state with a 'destination' field set
     """
-    # If we're already in the email assistant flow, maintain that flow
-    if state.get("email_assistant_state"):
-        return state.update(destination="email_assistant")
+    # Check if we're in the email assistant flow and awaiting data
+    if state.get("current_mode") == "email_assistant" and state.get("email_state") == "awaiting_data":
+        return state.update(destination="create_reply_email")
     
     # For all other cases, determine the appropriate destination
     return await _determine_destination(state, common_llm)
-
 
 async def _determine_destination(state: State, llm: ChatOpenAI) -> State:
     """
@@ -535,12 +525,11 @@ def present_response(state: State) -> State:
         gmaps_results=gmaps_results_to_clear,
     )
 
-# Replace existing email assistant actions with the improved version
-@action(reads=["user_input", "chat_history"], writes=["chat_history", "email_instructions_phase"])
-def start_email_assistant(state: State) -> State:
-    """Starts the email assistant process"""
+@action(reads=["user_input", "chat_history"], writes=["chat_history", "current_mode", "email_state"])
+def get_email_data(state: State) -> State:
+    """Prompts the user to provide the email and instructions in a single step"""
     
-    response = "To use the Email Assistant, I'll need two pieces of information:\n1. The email you want to respond to\n2. Instructions for how you want to respond\n\nPlease paste the email text first."
+    response = "To help you draft an email reply, please provide both:\n1. The original email text\n2. Your instructions for how you want to respond\n\nYou can separate them with '---' or clearly label which is which."
     
     updated_history = state.get("chat_history", []) + [
         {"role": "user", "content": state["user_input"]},
@@ -549,238 +538,96 @@ def start_email_assistant(state: State) -> State:
     
     return state.update(
         chat_history=updated_history,
-        email_instructions_phase="collect_email"
+        current_mode="email_assistant",
+        email_state="awaiting_data"
     )
 
-
-@action(reads=["user_input", "email_instructions_phase"], writes=["email_content", "email_instructions", "email_instructions_phase", "chat_history"])
-def collect_email_data(state: State) -> State:
-    """Collects email content and instructions based on the phase we're in"""
+@action(reads=["user_input", "chat_history", "email_state"], writes=["email_response", "chat_history", "email_state"])
+async def create_reply_email(state: State, common_llm: ChatOpenAI) -> State:
+    """Creates a reply email based on the provided data"""
     
-    # Get the current phase
-    phase = state.get("email_instructions_phase", "collect_email")
+    if state.get("email_state") != "awaiting_data":
+        return state
     
-    if phase == "collect_email":
-        # Save the email content
-        email_content = state["user_input"]
-        response = "Thanks for the email content. Now, please provide your instructions for how you want to respond to this email."
-        
-        # Add response to chat history
-        updated_history = state.get("chat_history", []) + [
-            {"role": "user", "content": state["user_input"]},
-            {"role": "assistant", "content": response},
-        ]
-        
-        return state.update(
-            chat_history=updated_history,
-            email_content=email_content,
-            email_instructions="",  # Initialize with empty string to satisfy the writes requirement
-            email_instructions_phase="collect_instructions"
-        )
+    # Process the user input to separate email and instructions
+    user_input = state["user_input"].strip()
     
-    elif phase == "collect_instructions":
-        # Save the instructions
-        email_instructions = state["user_input"]
-        response = "Thank you. I'm now going to help you draft a response based on these instructions."
-        
-        # Add response to chat history
-        updated_history = state.get("chat_history", []) + [
-            {"role": "user", "content": state["user_input"]},
-            {"role": "assistant", "content": response},
-        ]
-        
-        return state.update(
-            chat_history=updated_history,
-            email_instructions=email_instructions,
-            email_instructions_phase="determine_clarifications"
-        )
-    
-    return state
-
-
-@action(reads=["email_content", "email_instructions"], writes=["clarification_questions", "email_instructions_phase", "chat_history"])
-def determine_clarifications(state: State) -> State:
-    """Determines if clarification is needed for the email response"""
-    email_content = state["email_content"]
-    email_instructions = state["email_instructions"]
-    
-    client = _get_openai_client()
-    result = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a chatbot that has the task of generating responses to an email on behalf of a user. ",
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"The email you are to respond to is: {email_content}."
-                    f"Your instructions are: {email_instructions}."
-                    "Your first task is to ask any clarifying questions for the user"
-                    " who is asking you to respond to this email. These clarifying questions are for the user, "
-                    "*not* for the original sender of the email. Please "
-                    "generate a list of at most 3 questions (and you really can do less -- 2, 1, or even none are OK! joined by newlines, included only if you feel that you could leverage "
-                    "clarification (my time is valuable)."
-                    "The questions, joined by newlines, must be the only text you return. If you do not need clarification, return an empty string."
-                ),
-            },
-        ],
-    )
-    content = result.choices[0].message.content
-    all_questions = content.split("\n") if content else []
-    
-    # Add response to chat history if there are questions
-    if all_questions and all_questions[0].strip():
-        questions_text = "\n".join(all_questions)
-        response = f"I need a few clarifications before drafting the response:\n\n{questions_text}\n\nPlease provide answers to these questions."
-        
-        updated_history = state.get("chat_history", []) + [
-            {"role": "assistant", "content": response},
-        ]
-        
-        return state.update(
-            chat_history=updated_history,
-            clarification_questions=all_questions,
-            email_instructions_phase="collect_clarifications"
-        )
+    # Check if there's a separator
+    if "---" in user_input:
+        parts = user_input.split("---", 1)
+        email_content = parts[0].strip()
+        instructions = parts[1].strip()
     else:
-        # No questions needed, go straight to drafting
-        return state.update(
-            clarification_questions=[],
-            email_instructions_phase="formulate_draft"
-        )
-
-
-@action(reads=["user_input", "clarification_questions"], writes=["clarification_answers", "email_instructions_phase", "chat_history"])
-def collect_clarifications(state: State) -> State:
-    """Collects answers to clarification questions"""
+        # Send the input to the LLM to intelligently extract email and instructions
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that extracts the original email and response instructions from user input."},
+            {"role": "user", "content": f"Please identify the original email text and the instructions for how to respond within the following text. Return ONLY a JSON with two keys: 'email' and 'instructions'.\n\n{user_input}"}
+        ]
+        
+        result = await common_llm.ainvoke(messages)
+        try:
+            # Try to parse as JSON
+            import json
+            parsed = json.loads(result.content)
+            email_content = parsed.get("email", "")
+            instructions = parsed.get("instructions", "")
+        except:
+            # Fallback: try to detect if there are clear sections
+            if "email:" in user_input.lower() and "instructions:" in user_input.lower():
+                # Find the indices
+                email_start = user_input.lower().find("email:")
+                instructions_start = user_input.lower().find("instructions:")
+                
+                if email_start < instructions_start:
+                    email_content = user_input[email_start+6:instructions_start].strip()
+                    instructions = user_input[instructions_start+12:].strip()
+                else:
+                    instructions = user_input[instructions_start+12:email_start].strip()
+                    email_content = user_input[email_start+6:].strip()
+            else:
+                # Last resort: assume first half is email, second half is instructions
+                half_point = len(user_input) // 2
+                email_content = user_input[:half_point].strip()
+                instructions = user_input[half_point:].strip()
     
-    # Get the user's answers
-    clarification_answers = [state["user_input"]]  # Simple case - just use the whole input as one answer
+    # Print debugging info
+    print(f"Extracted Email: {email_content[:100]}...")
+    print(f"Extracted Instructions: {instructions[:100]}...")
     
-    # Add to chat history
+    # Generate email reply
+    messages = [
+        {"role": "system", "content": "You are an email assistant that crafts professional, contextually appropriate responses."},
+        {"role": "user", "content": f"Original Email:\n{email_content}\n\nInstructions for Response:\n{instructions}\n\nPlease craft a response email based on these instructions."}
+    ]
+    
+    result = await common_llm.ainvoke(messages)
+    email_response = result.content
+    
+    # Build response to show user
+    response = f"Here's the email response I've created based on your input:\n\n{email_response}"
+    
     updated_history = state.get("chat_history", []) + [
         {"role": "user", "content": state["user_input"]},
-    ]
-    
-    return state.update(
-        chat_history=updated_history,
-        clarification_answers=clarification_answers,
-        email_instructions_phase="formulate_draft"
-    )
-
-
-@action(reads=["email_content", "email_instructions", "clarification_questions", "clarification_answers"], 
-        writes=["current_draft", "draft_history", "email_instructions_phase", "chat_history"])
-def formulate_draft(state: State) -> State:
-    """Formulates a draft email response"""
-    
-    email_content = state["email_content"]
-    email_instructions = state["email_instructions"]
-    
-    # Format clarification Q&A if they exist
-    clarification_answers_formatted_q_a = ""
-    if state.get("clarification_questions") and state.get("clarification_answers"):
-        clarification_answers_formatted_q_a = "\n".join(
-            [
-                f"Q: {q}\nA: {a}"
-                for q, a in zip(
-                    state["clarification_questions"], state.get("clarification_answers", [])
-                )
-            ]
-        )
-    
-    client = _get_openai_client()
-    
-    instructions = [
-        f"The email you are to respond to is: {email_content}.",
-        f"Your instructions are: {email_instructions}.",
-    ]
-    
-    if clarification_answers_formatted_q_a:
-        instructions.append("You have already asked the following questions and received the following answers: ")
-        instructions.append(clarification_answers_formatted_q_a)
-    
-    draft_history = state.get("draft_history", [])
-    if draft_history:
-        instructions.append("Your previous draft was: ")
-        instructions.append(draft_history[-1])
-        instructions.append(
-            "you received the following feedback, please incorporate this into your response: "
-        )
-        instructions.append(state.get("feedback", ""))
-    
-    instructions.append("Please generate a draft response using all this information!")
-    prompt = " ".join(instructions)
-
-    result = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a chatbot that has the task of generating responses to an email. ",
-            },
-            {"role": "user", "content": prompt},
-        ],
-    )
-    
-    draft_content = result.choices[0].message.content
-    
-    # Add to chat history
-    response = f"Here's my draft email response:\n\n{draft_content}\n\nWhat do you think? Would you like me to make any changes?"
-    
-    updated_history = state.get("chat_history", []) + [
         {"role": "assistant", "content": response},
     ]
     
-    # Update draft history
-    new_draft_history = draft_history + [draft_content] if draft_history else [draft_content]
+    # Clear the email_state to prevent re-processing
+    return state.update(
+        email_response=email_response,
+        chat_history=updated_history,
+        email_state=None  # Important: clear the state after processing
+    )
+@action(reads=["email_response"], writes=["final_response", "current_mode"])
+def finalize_email_response(state: State) -> State:
+    """Finalizes the email response and returns to general mode"""
     
     return state.update(
-        chat_history=updated_history,
-        current_draft=draft_content,
-        draft_history=new_draft_history,
-        email_instructions_phase="feedback_or_finalize"
+        final_response=f"Here's the email response I've created based on your input:\n\n{state['email_response']}",
+        current_mode="general",
+        email_state=None 
     )
-
-
-@action(reads=["user_input"], writes=["feedback", "email_instructions_phase", "chat_history", "current_mode"])
-def process_feedback(state: State) -> State:
-    """Processes feedback for the draft email"""
     
-    user_input = state["user_input"].lower()
     
-    # Check if the user wants to finalize or provide feedback
-    if any(word in user_input for word in ["good", "great", "perfect", "finalize", "done", "looks good"]):
-        # User is satisfied with the draft
-        response = "I'm glad you're happy with the draft! The final email response is ready to send."
-        
-        updated_history = state.get("chat_history", []) + [
-            {"role": "user", "content": state["user_input"]},
-            {"role": "assistant", "content": response},
-        ]
-        
-        return state.update(
-            chat_history=updated_history,
-            email_instructions_phase=None,  # Clear the email state
-            current_mode="general"  # Return to general mode
-        )
-    else:
-        # User is providing feedback
-        response = "Thank you for your feedback. I'll revise the draft accordingly."
-        
-        updated_history = state.get("chat_history", []) + [
-            {"role": "user", "content": state["user_input"]},
-            {"role": "assistant", "content": response},
-        ]
-        
-        return state.update(
-            chat_history=updated_history,
-            feedback=state["user_input"],
-            email_instructions_phase="formulate_draft"  # Go back to drafting
-        )
-
 common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
 full_mcp_config = add_keys_to_config()
 
@@ -805,13 +652,10 @@ graph = (
         # Google Maps actions
         perform_google_maps_search=perform_google_maps_search.bind(common_llm=common_llm),
         
-        # Email Assistant actions
-        start_email_assistant=start_email_assistant,
-        collect_email_data=collect_email_data,
-        determine_clarifications=determine_clarifications,
-        collect_clarifications=collect_clarifications,
-        formulate_draft=formulate_draft,
-        process_feedback=process_feedback,
+        get_email_data=get_email_data,
+        create_reply_email=create_reply_email.bind(common_llm=common_llm),
+        finalize_email_response=finalize_email_response,
+        
     )
     .with_transitions(
         # Main conversation flow
@@ -826,23 +670,12 @@ graph = (
         ("route_request", "perform_google_maps_search", when(destination="search_google_maps")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
         
-        # Email Assistant transitions
-        ("route_request", "start_email_assistant", when(destination="email_assistant")),
-        ("route_request", "collect_email_data", when(destination="collect_email_data")),
-        ("route_request", "collect_clarifications", when(destination="collect_clarifications")),
-        ("route_request", "formulate_draft", when(destination="formulate_draft")),
-        ("route_request", "process_feedback", when(destination="process_feedback")),
-        
-        # After each email assistant step, we need to return to route_request
-        ("start_email_assistant", "get_user_input"),
-        ("collect_email_data", "get_user_input"),
-        ("determine_clarifications", "get_user_input"),
-        ("collect_clarifications", "formulate_draft"),
-        ("formulate_draft", "get_user_input"),
-        ("process_feedback", "get_user_input"),
-        
-        # For the case where we need to determine clarifications after collecting data
-        ("collect_email_data", "determine_clarifications", when(email_instructions_phase="determine_clarifications")),
+        # Email Assistant simplified flow
+        ("route_request", "get_email_data", when(destination="email_assistant")),
+        ("get_email_data", "get_user_input"),
+        ("route_request", "create_reply_email", when(destination="create_reply_email")),
+        ("create_reply_email", "finalize_email_response"),
+        ("finalize_email_response", "generate_final_response"),
         
         # Default fallback
         ("route_request", "prompt_for_more", default),
