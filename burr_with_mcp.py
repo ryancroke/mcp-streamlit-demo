@@ -24,6 +24,7 @@ DESTINATIONS = {
     "search_atlassian": "atlassian_search",
     "general_ai_response": "general",
     "email_assistant": "email_assistant",
+    "search_google_maps": "google_maps_search",
     "search_knowledge_base": "knowledge_base_search",
     "unknown": "unknown",
     "reset_mode": "general",
@@ -50,6 +51,13 @@ MCP_CONFIGS = {
             "--jira-url",
             "https://haptiq.atlassian.net",
         ]
+    },
+    "google-maps": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-google-maps"],
+      "env": {
+        "GOOGLE_MAPS_API_KEY": "${GOOGLE_MAPS_API_KEY}"
+      }
     },
     "chroma": {
         "command": "uvx",
@@ -104,54 +112,116 @@ def get_user_input(state: State, user_input: str) -> State:
     return state.update(user_input=user_input)
 
 
-@action(reads=["user_input", "chat_history", "current_mode"], writes=["destination"])
+@action(reads=["user_input", "chat_history", "current_mode", "email_assistant_state"], 
+        writes=["destination"])
 async def route_request(state: State, common_llm: ChatOpenAI) -> State:
-    # Check if we're in the email assistant flow
-    if state.get("email_instructions_phase"):
-        # Route based on the current phase of email assistant
-        email_phase = state.get("email_instructions_phase")
-        if email_phase == "collect_email":
-            return state.update(destination="collect_email_data")
-        elif email_phase == "collect_instructions":
-            return state.update(destination="collect_email_data")
-        elif email_phase == "collect_clarifications":
-            return state.update(destination="collect_clarifications")
-        elif email_phase == "formulate_draft":
-            return state.update(destination="formulate_draft")
-        elif email_phase == "feedback_or_finalize":
-            return state.update(destination="process_feedback")
+    """
+    Routes user input to the appropriate destination based on content analysis.
+    
+    This action serves as the central router for the chatbot, determining which
+    subprocess should handle the user's request. It preserves subprocess integrity
+    by maintaining the flow of ongoing processes like the email assistant.
+    
+    Args:
+        state: The current application state
+        common_llm: The language model for intent classification
         
-    # Regular routing logic
+    Returns:
+        Updated state with a 'destination' field set
+    """
+    # If we're already in the email assistant flow, maintain that flow
+    if state.get("email_assistant_state"):
+        return state.update(destination="email_assistant")
+    
+    # For all other cases, determine the appropriate destination
+    return await _determine_destination(state, common_llm)
+
+
+async def _determine_destination(state: State, llm: ChatOpenAI) -> State:
+    """
+    Helper function to determine the appropriate destination for user input.
+    
+    Args:
+        state: Current application state
+        llm: Language model for classification
+        
+    Returns:
+        Updated state with destination set
+    """
+    prompt = _build_routing_prompt(state["user_input"])
+    result = await llm.ainvoke(prompt)
+    
+    # Process and validate the model's response
+    raw_destination = result.content.strip().lower()
+    destination = _validate_destination(raw_destination)
+    
+    # Log the routing decision
     current_mode = state.get("current_mode", "general")
-    chat_history = state.get("chat_history", [])
-
-    prompt = (
-        f"You are a chatbot. You've been prompted this: {state['user_input']}. "
-        f"You have the capability of responding in the following modes: {', '.join([mode for mode in DESTINATIONS.keys() if mode != 'reset_mode'])}. "
-        "Please respond with *only* a single response representing the mode that most accurately, for example 'search_knowledge_base' or 'search_internet' or 'email_assistant' or 'general_ai_response' or 'unknown' or 'reset_mode'."
-        "corresponds to the prompt. "
-        "For instance, if the prompt is 'search the internet for the latest news on the stock market', "
-        "the mode would be 'search_internet'. If the prompt is 'what is the capital of France', the mode would be 'general_ai_response'."
-        "If the prompt is about GitHub, the mode would be 'search_github'. If the prompt is about Brave Search, the mode would be 'search_internet'."
-        "If the prompt is about JIRA, the mode would be 'search_atlassian'."
-        "If the prompt mentions wanting help with emails, writing emails, or creating email responses, "
-        "the mode would be 'email_assistant'."
-        "If the prompt asks a question about the knowledge base, or to look at ChromaDB, the mode would be 'search_knowledge_base'."
-        "If none of these modes apply, please respond with 'unknown'."
-    )
-
-    print(f"Prompt: {prompt}")
-
-    result = await common_llm.ainvoke(prompt)
-
-    content = result.content.strip().lower()
-    destination = content if content in DESTINATIONS else "unknown"
-
     print(f"Current Mode: {current_mode}, Determined Destination: {destination}")
-    print("Chat History (full): ", chat_history)
-
+    
     return state.update(destination=destination)
 
+
+def _build_routing_prompt(user_input: str) -> str:
+    """
+    Constructs a clear prompt for the routing LLM.
+    
+    Args:
+        user_input: The user's message
+        
+    Returns:
+        A formatted prompt string
+    """
+    # Get valid destination options (excluding reset_mode)
+    valid_options = [mode for mode in DESTINATIONS.keys() if mode != 'reset_mode']
+    options_list = ', '.join(valid_options)
+    
+    # Multi-line prompt for better readability
+    prompt = f"""You are a chatbot classifier. Analyze this user input: "{user_input}"
+
+Your task is to classify this input into exactly ONE of these categories:
+{options_list}
+
+Respond with ONLY the category name, nothing else. For example:
+- For search queries about the web: "search_internet"
+- For questions about coding repositories: "search_github"
+- For JIRA or Atlassian questions: "search_atlassian"
+- For help with emails or email drafting: "email_assistant"
+- For general knowledge questions: "general_ai_response"
+- For location or map queries: "search_google_maps"
+- For questions about the internal knowledge base. This is a ChromaDB collection and is about our users and their interactions with our product: "search_knowledge_base"
+- For queries that don't fit any category: "unknown"
+
+Classification:"""
+    
+    return prompt
+
+
+def _validate_destination(raw_destination: str) -> str:
+    """
+    Validates and sanitizes the destination returned by the LLM.
+    
+    Args:
+        raw_destination: The raw destination string from the LLM
+        
+    Returns:
+        A validated destination string
+    """
+    # Check if the raw destination is a valid key in DESTINATIONS
+    if raw_destination in DESTINATIONS:
+        return raw_destination
+    
+    # Log invalid destinations for debugging
+    print(f"Warning: Invalid destination '{raw_destination}', defaulting to 'unknown'")
+    
+    # Try to find a close match (optional)
+    for valid_dest in DESTINATIONS.keys():
+        if valid_dest in raw_destination:
+            print(f"Found partial match: '{valid_dest}'")
+            return valid_dest
+    
+    # Default fallback
+    return "unknown"
 
 @action(
     reads=["user_input", "chat_history", "current_mode"],
@@ -256,6 +326,17 @@ def prompt_for_more(state: State) -> State:
 
     return state.update(chat_history=updated_history)
 
+@action(
+    reads=["user_input", "chat_history", "current_mode"],
+    writes=["gmaps_results"],
+)
+async def perform_google_maps_search(state: State, gmaps_agent: MCPAgent) -> State:
+    print(">>> Performing Google Maps search...")
+    query = state["user_input"]
+    chat_history = state.get("chat_history", [])
+
+    result = await gmaps_agent.run(query)
+    return state.update(gmaps_results=result)
 
 @action(
     reads=["user_input", "chat_history", "current_mode"],
@@ -300,56 +381,47 @@ async def search_knowledge_base(state: State, chroma_agent: MCPAgent) -> State:
         "destination",
         "atlassian_search_results",
         "knowledge_base_results",
+        "gmaps_results",
     ],
     writes=["chat_history", "final_response", "current_mode"],
 )
 def generate_final_response(state: State) -> State:
     print(">>> Finalizing response...")
-    # Print current state values for debugging
-    print(f">>> State contains knowledge_base_results: {'knowledge_base_results' in state}")
-    if 'knowledge_base_results' in state:
-        print(f">>> Knowledge base results value: {state['knowledge_base_results']}...")
     
     final_response_content = "An issue occurred."
-
-    # Get all possible results
-    internet_results = state.get("internet_search_results")
-    github_results = state.get("github_search_results")
-    atlassian_results = state.get("atlassian_search_results")
-    knowledge_base_results = state.get("knowledge_base_results")
-    general_ai_resp = state.get("general_ai_response")
     destination = state["destination"]
-
-    print(f">>> Destination: {destination}")
     
-    # Prioritize based on destination
-    if destination == "search_knowledge_base" and knowledge_base_results:
-        print(">>> Using knowledge base results for response")
-        final_response_content = knowledge_base_results
-    elif destination == "search_internet" and internet_results:
-        final_response_content = f"Internet Search Results:\n{internet_results}"
-    elif destination == "search_github" and github_results:
-        final_response_content = f"GitHub Search Results:\n{github_results}"
-    elif destination == "search_atlassian" and atlassian_results:
-        final_response_content = f"JIRA Search Results:\n{atlassian_results}"
-    elif general_ai_resp:
-        final_response_content = general_ai_resp
-
-    # Rest of the function remains the same...
+    # Map destination to current_mode using DESTINATIONS
+    new_current_mode = DESTINATIONS.get(destination, "general")
+    
+    print(f">>> Destination: {destination}")
+    print(f">>> Mode: {new_current_mode}")
+    
+    # Results mapping - links modes to their result variables
+    results_mapping = {
+        "knowledge_base_search": ("knowledge_base_results", "Knowledge Base Results"),
+        "internet_search": ("internet_search_results", "Internet Search Results"),
+        "github_search": ("github_search_results", "GitHub Search Results"),
+        "atlassian_search": ("atlassian_search_results", "JIRA Search Results"),
+        "google_maps_search": ("gmaps_results", "Google Maps Search Results"),
+        "general": ("general_ai_response", None)  # No prefix for general response
+    }
+    
+    # Get the relevant result for the current mode
+    if new_current_mode in results_mapping:
+        result_key, prefix = results_mapping[new_current_mode]
+        result_content = state.get(result_key)
+        
+        if result_content:
+            if prefix:
+                final_response_content = f"{prefix}:\n{result_content}"
+            else:
+                final_response_content = result_content
+    
+    # Build the chat history update
     user_message = {"role": "user", "content": state["user_input"]}
     assistant_message = {"role": "assistant", "content": final_response_content}
-
     updated_history = state.get("chat_history", []) + [user_message, assistant_message]
-
-    new_current_mode = "general"
-    if destination == "search_internet":
-        new_current_mode = "internet_search"
-    elif destination == "search_github":
-        new_current_mode = "github_search"
-    elif destination == "search_atlassian":
-        new_current_mode = "atlassian_search"
-    elif destination == "search_knowledge_base":  # Add this condition
-        new_current_mode = "knowledge_base_search"
     
     print(f">>> Setting new current mode to: {new_current_mode}")
     
@@ -369,7 +441,8 @@ def generate_final_response(state: State) -> State:
         "github_search_results",
         "general_ai_response",
         "atlassian_search_results",
-        "knowledge_base_results", 
+        "knowledge_base_results",
+        "gmaps_results",
     ],
     writes=[
         "user_input",
@@ -377,7 +450,8 @@ def generate_final_response(state: State) -> State:
         "github_search_results",
         "general_ai_response",
         "atlassian_search_results",
-        "knowledge_base_results", 
+        "knowledge_base_results",
+        "gmaps_results",
     ],
 )
 def present_response(state: State) -> State:
@@ -389,6 +463,7 @@ def present_response(state: State) -> State:
     atlassian_results_to_clear = state.get("atlassian_search_results")
     general_ai_response_to_clear = state.get("general_ai_response")
     knowledge_base_results_to_clear = state.get("knowledge_base_results")
+    gmaps_results_to_clear = state.get("gmaps_results")
     current_mode = state["current_mode"]
 
     if current_mode != "internet_search":
@@ -397,6 +472,8 @@ def present_response(state: State) -> State:
         github_results_to_clear = None
     if current_mode != "knowledge_base_search":
         knowledge_base_results_to_clear = None
+    if current_mode != "google_maps_search":
+        gmaps_results_to_clear = None
     if current_mode != "atlassian_search":
         atlassian_results_to_clear = None
     if current_mode != "general":
@@ -409,6 +486,7 @@ def present_response(state: State) -> State:
         general_ai_response=general_ai_response_to_clear,
         atlassian_search_results=atlassian_results_to_clear,
         knowledge_base_results=knowledge_base_results_to_clear,
+        gmaps_results=gmaps_results_to_clear,
     )
 
 # Replace existing email assistant actions with the improved version
@@ -672,6 +750,12 @@ brave_mcp_config = {
 brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
 brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client, max_steps=5)
 
+gmaps_mcp_config = {
+    "mcpServers": {"google-maps": full_mcp_config["mcpServers"]["google-maps"]}
+}
+gmaps_mcp_client = MCPClient.from_dict(gmaps_mcp_config)
+gmaps_mcp_agent = MCPAgent(llm=common_llm, client=gmaps_mcp_client, max_steps=10)
+
 atlassian_mcp_config = {
     "mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}
 }
@@ -708,6 +792,11 @@ graph = (
         generate_final_response=generate_final_response,
         present_response=present_response,
         
+        # Google Maps actions
+        perform_google_maps_search=perform_google_maps_search.bind(
+            gmaps_agent=gmaps_mcp_agent
+        ),
+        
         # Email Assistant actions
         start_email_assistant=start_email_assistant,
         collect_email_data=collect_email_data,
@@ -726,6 +815,7 @@ graph = (
         ("route_request", "perform_atlassian_search", when(destination="search_atlassian")),
         ("route_request", "search_knowledge_base", when(destination="search_knowledge_base")),
         ("route_request", "generate_general_ai_response", when(destination="general_ai_response")),
+        ("route_request", "perform_google_maps_search", when(destination="search_google_maps")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
         
         # Email Assistant transitions
@@ -755,7 +845,7 @@ graph = (
         ("perform_atlassian_search", "generate_final_response"),
         ("search_knowledge_base", "generate_final_response"),
         ("generate_general_ai_response", "generate_final_response"),
-        
+        ("perform_google_maps_search", "generate_final_response"),
         # Final response and loop back
         ("generate_final_response", "present_response"),
         ("present_response", "get_user_input"),

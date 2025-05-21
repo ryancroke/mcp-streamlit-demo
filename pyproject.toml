@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "burr>=0.39.1",
     "chromadb>=1.0.9",
+    "graphviz>=0.20.3",
     "langchain-openai>=0.3.17",
     "mcp-use>=1.2.12",
     "openai>=1.77.0",

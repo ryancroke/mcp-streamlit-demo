@@ -36,11 +36,16 @@ def show_server_status(burr_app):
         "Internet Search": "internet_search",
         "GitHub": "github_search",
         "Atlassian": "atlassian_search",
-        "Knowledge Base": "knowledge_base_search"
+        "Knowledge Base": "knowledge_base_search",
+        "Google Maps": "google_maps_search"
     }
     
     # Create the sidebar
     st.sidebar.title("MCP Server Status")
+    
+    st.logo(
+        "documentation/haptiq.png",
+    )
     
     # List all servers with indicators
     for server_name, mode in servers.items():
@@ -53,7 +58,8 @@ def show_server_status(burr_app):
         # Show the server with its indicator
         st.sidebar.markdown(f"{indicator} {server_name}")
     
-    # Show email assistant status if active
+    st.sidebar.title("Tools and Apps Status")
+    
     if email_phase:
         st.sidebar.markdown(f"🟢 Email Assistant ({email_phase})")
     else:
@@ -70,7 +76,7 @@ def show_server_status(burr_app):
 
 
 async def main():
-    st.title("Chatbot example with Burr and MCP")
+    st.title("Chatbot with Finite State Machine, MCPs, and Apps")
     burr_app = initialize_burr_app()
     
     # Show server status in sidebar
