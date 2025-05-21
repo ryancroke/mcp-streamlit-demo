@@ -35,7 +35,8 @@ def show_server_status(burr_app):
         "General AI": "general",
         "Internet Search": "internet_search",
         "GitHub": "github_search",
-        "Atlassian": "atlassian_search"
+        "Atlassian": "atlassian_search",
+        "Knowledge Base": "knowledge_base_search"
     }
     
     # Create the sidebar
@@ -86,10 +87,15 @@ async def main():
         # Regular chatbot flow - the FSM handles all the logic now
         async for action, result, state in burr_app.aiterate(
             inputs={"user_input": prompt},
-            halt_after=["generate_final_response", "prompt_for_more", 
-                        "start_email_assistant", "collect_email_data", 
-                        "determine_clarifications", "collect_clarifications",
-                        "formulate_draft", "process_feedback"]
+            halt_after=[
+            "generate_final_response", 
+            "prompt_for_more",
+            "start_email_assistant",
+            "collect_email_data", 
+            "determine_clarifications",
+            "formulate_draft",
+            "process_feedback"
+        ]
         ):
             # Debug print kept to see action execution
             print(f">>>> Executing Burr Action: {action.name}")

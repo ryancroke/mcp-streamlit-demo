@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from mcp_use import MCPAgent, MCPClient
 
-from burr.core import Application, ApplicationBuilder, State, default, when, graph
+from burr.core import Application, ApplicationBuilder, State, default, when, graph, expr
 from burr.core.action import action
 from burr.lifecycle import LifecycleAdapter
 from burr.tracking import LocalTrackingClient
@@ -23,7 +23,8 @@ DESTINATIONS = {
     "search_github": "github_search",
     "search_atlassian": "atlassian_search",
     "general_ai_response": "general",
-    "email_assistant": "email_assistant",  # Add this new mode
+    "email_assistant": "email_assistant",
+    "search_knowledge_base": "knowledge_base_search",
     "unknown": "unknown",
     "reset_mode": "general",
 }
@@ -48,8 +49,18 @@ MCP_CONFIGS = {
             "https://mcp.atlassian.com/v1/sse",
             "--jira-url",
             "https://haptiq.atlassian.net",
-        ],
+        ]
     },
+    "chroma": {
+        "command": "uvx",
+        "args": [
+            "chroma-mcp",
+            "--client-type", 
+            "persistent",
+            "--data-dir", 
+            "/Users/ryanhaptiq/Projects/mcp-streamlit-demo/chroma/chroma_db"
+        ]
+    }
 }
 
 
@@ -93,7 +104,7 @@ def get_user_input(state: State, user_input: str) -> State:
     return state.update(user_input=user_input)
 
 
-@action(reads=["user_input", "chat_history", "current_mode", "email_instructions_phase"], writes=["destination"])
+@action(reads=["user_input", "chat_history", "current_mode"], writes=["destination"])
 async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     # Check if we're in the email assistant flow
     if state.get("email_instructions_phase"):
@@ -117,7 +128,7 @@ async def route_request(state: State, common_llm: ChatOpenAI) -> State:
     prompt = (
         f"You are a chatbot. You've been prompted this: {state['user_input']}. "
         f"You have the capability of responding in the following modes: {', '.join([mode for mode in DESTINATIONS.keys() if mode != 'reset_mode'])}. "
-        "Please respond with *only* a single word representing the mode that most accurately "
+        "Please respond with *only* a single response representing the mode that most accurately, for example 'search_knowledge_base' or 'search_internet' or 'email_assistant' or 'general_ai_response' or 'unknown' or 'reset_mode'."
         "corresponds to the prompt. "
         "For instance, if the prompt is 'search the internet for the latest news on the stock market', "
         "the mode would be 'search_internet'. If the prompt is 'what is the capital of France', the mode would be 'general_ai_response'."
@@ -125,6 +136,7 @@ async def route_request(state: State, common_llm: ChatOpenAI) -> State:
         "If the prompt is about JIRA, the mode would be 'search_atlassian'."
         "If the prompt mentions wanting help with emails, writing emails, or creating email responses, "
         "the mode would be 'email_assistant'."
+        "If the prompt asks a question about the knowledge base, or to look at ChromaDB, the mode would be 'search_knowledge_base'."
         "If none of these modes apply, please respond with 'unknown'."
     )
 
@@ -246,6 +258,39 @@ def prompt_for_more(state: State) -> State:
 
 
 @action(
+    reads=["user_input", "chat_history", "current_mode"],
+    writes=["knowledge_base_results"],
+)
+async def search_knowledge_base(state: State, chroma_agent: MCPAgent) -> State:
+    print(">>> Searching knowledge base...")
+    query = state["user_input"]
+    chat_history = state.get("chat_history", [])
+    
+    # Now proceed with the actual search
+    truncated_history = truncate_history(chat_history)
+    history_string = "\n".join(
+        [f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history]
+    )
+
+    query_to_send = (
+        f"Task: The user is looking for information from our ChromaDB knowledge base. "
+        f"There is a 'user_interactions' collection in ChromaDB. "
+        f"Then use the the appropriate chromaDB tool to satisfy the user query: {query}"
+    )
+
+    print(f">>> Sending query to ChromaDB agent: {query_to_send}...")
+    result = await chroma_agent.run(query_to_send)
+    print(f">>> ChromaDB Search Result: {result}")
+
+    # Make sure we're not returning None or an empty result
+    if not result or result.strip() == "":
+        result = "Knowledge Base Search Results:\nI searched the knowledge base but couldn't find any information about your query. It's possible that this topic hasn't been discussed before or the knowledge base is still being populated."
+    else:
+        result = f"Knowledge Base Search Results:\n{result}"
+    
+    return state.update(knowledge_base_results=result)
+
+@action(
     reads=[
         "user_input",
         "internet_search_results",
@@ -254,28 +299,43 @@ def prompt_for_more(state: State) -> State:
         "chat_history",
         "destination",
         "atlassian_search_results",
+        "knowledge_base_results",
     ],
     writes=["chat_history", "final_response", "current_mode"],
 )
 def generate_final_response(state: State) -> State:
     print(">>> Finalizing response...")
+    # Print current state values for debugging
+    print(f">>> State contains knowledge_base_results: {'knowledge_base_results' in state}")
+    if 'knowledge_base_results' in state:
+        print(f">>> Knowledge base results value: {state['knowledge_base_results']}...")
+    
     final_response_content = "An issue occurred."
 
+    # Get all possible results
     internet_results = state.get("internet_search_results")
     github_results = state.get("github_search_results")
     atlassian_results = state.get("atlassian_search_results")
+    knowledge_base_results = state.get("knowledge_base_results")
     general_ai_resp = state.get("general_ai_response")
     destination = state["destination"]
 
-    if internet_results:
+    print(f">>> Destination: {destination}")
+    
+    # Prioritize based on destination
+    if destination == "search_knowledge_base" and knowledge_base_results:
+        print(">>> Using knowledge base results for response")
+        final_response_content = knowledge_base_results
+    elif destination == "search_internet" and internet_results:
         final_response_content = f"Internet Search Results:\n{internet_results}"
-    elif github_results:
+    elif destination == "search_github" and github_results:
         final_response_content = f"GitHub Search Results:\n{github_results}"
-    elif atlassian_results:
+    elif destination == "search_atlassian" and atlassian_results:
         final_response_content = f"JIRA Search Results:\n{atlassian_results}"
     elif general_ai_resp:
         final_response_content = general_ai_resp
 
+    # Rest of the function remains the same...
     user_message = {"role": "user", "content": state["user_input"]}
     assistant_message = {"role": "assistant", "content": final_response_content}
 
@@ -288,13 +348,11 @@ def generate_final_response(state: State) -> State:
         new_current_mode = "github_search"
     elif destination == "search_atlassian":
         new_current_mode = "atlassian_search"
-    elif destination == "general_ai_response":
-        new_current_mode = "general"
-    elif destination == "reset_mode":
-        new_current_mode = "general"
-    elif destination == "unknown":
-        new_current_mode = "general"
-
+    elif destination == "search_knowledge_base":  # Add this condition
+        new_current_mode = "knowledge_base_search"
+    
+    print(f">>> Setting new current mode to: {new_current_mode}")
+    
     return state.update(
         chat_history=updated_history,
         final_response=final_response_content,
@@ -311,6 +369,7 @@ def generate_final_response(state: State) -> State:
         "github_search_results",
         "general_ai_response",
         "atlassian_search_results",
+        "knowledge_base_results", 
     ],
     writes=[
         "user_input",
@@ -318,6 +377,7 @@ def generate_final_response(state: State) -> State:
         "github_search_results",
         "general_ai_response",
         "atlassian_search_results",
+        "knowledge_base_results", 
     ],
 )
 def present_response(state: State) -> State:
@@ -328,12 +388,15 @@ def present_response(state: State) -> State:
     github_results_to_clear = state.get("github_search_results")
     atlassian_results_to_clear = state.get("atlassian_search_results")
     general_ai_response_to_clear = state.get("general_ai_response")
+    knowledge_base_results_to_clear = state.get("knowledge_base_results")
     current_mode = state["current_mode"]
 
     if current_mode != "internet_search":
         internet_results_to_clear = None
     if current_mode != "github_search":
         github_results_to_clear = None
+    if current_mode != "knowledge_base_search":
+        knowledge_base_results_to_clear = None
     if current_mode != "atlassian_search":
         atlassian_results_to_clear = None
     if current_mode != "general":
@@ -345,11 +408,10 @@ def present_response(state: State) -> State:
         github_search_results=github_results_to_clear,
         general_ai_response=general_ai_response_to_clear,
         atlassian_search_results=atlassian_results_to_clear,
+        knowledge_base_results=knowledge_base_results_to_clear,
     )
 
-
-# Email Assistant Actions
-
+# Replace existing email assistant actions with the improved version
 @action(reads=["user_input", "chat_history"], writes=["chat_history", "email_instructions_phase"])
 def start_email_assistant(state: State) -> State:
     """Starts the email assistant process"""
@@ -595,7 +657,6 @@ def process_feedback(state: State) -> State:
             email_instructions_phase="formulate_draft"  # Go back to drafting
         )
 
-
 common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
 full_mcp_config = add_keys_to_config()
 
@@ -617,6 +678,14 @@ atlassian_mcp_config = {
 atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
 atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
 
+chroma_mcp_config = {
+    "mcpServers": {"chroma": full_mcp_config["mcpServers"]["chroma"]}
+}
+print(f">>> Chroma MCP config: {chroma_mcp_config}")
+chroma_mcp_client = MCPClient.from_dict(chroma_mcp_config)
+chroma_mcp_agent = MCPAgent(llm=common_llm, client=chroma_mcp_client, max_steps=10)
+
+
 graph = (
     graph.GraphBuilder()
     .with_actions(
@@ -628,6 +697,9 @@ graph = (
         perform_github_search=perform_github_search.bind(github_agent=github_mcp_agent),
         perform_atlassian_search=perform_atlassian_search.bind(
             atlassian_agent=atlassian_mcp_agent
+        ),
+        search_knowledge_base=search_knowledge_base.bind(
+            chroma_agent=chroma_mcp_agent
         ),
         generate_general_ai_response=generate_general_ai_response.bind(
             common_llm=common_llm
@@ -645,23 +717,15 @@ graph = (
         process_feedback=process_feedback,
     )
     .with_transitions(
+        # Main conversation flow
         ("get_user_input", "route_request"),
-        (
-            "route_request",
-            "perform_internet_search",
-            when(destination="search_internet"),
-        ),
+        
+        # Routing based on destination
+        ("route_request", "perform_internet_search", when(destination="search_internet")),
         ("route_request", "perform_github_search", when(destination="search_github")),
-        (
-            "route_request",
-            "perform_atlassian_search",
-            when(destination="search_atlassian"),
-        ),
-        (
-            "route_request",
-            "generate_general_ai_response",
-            when(destination="general_ai_response"),
-        ),
+        ("route_request", "perform_atlassian_search", when(destination="search_atlassian")),
+        ("route_request", "search_knowledge_base", when(destination="search_knowledge_base")),
+        ("route_request", "generate_general_ai_response", when(destination="general_ai_response")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
         
         # Email Assistant transitions
@@ -685,15 +749,14 @@ graph = (
         # Default fallback
         ("route_request", "prompt_for_more", default),
         
-        (
-            [
-                "perform_internet_search",
-                "perform_github_search",
-                "perform_atlassian_search",
-                "generate_general_ai_response",
-            ],
-            "generate_final_response",
-        ),
+        # Search actions to final response
+        ("perform_internet_search", "generate_final_response"),
+        ("perform_github_search", "generate_final_response"),
+        ("perform_atlassian_search", "generate_final_response"),
+        ("search_knowledge_base", "generate_final_response"),
+        ("generate_general_ai_response", "generate_final_response"),
+        
+        # Final response and loop back
         ("generate_final_response", "present_response"),
         ("present_response", "get_user_input"),
         ("prompt_for_more", "get_user_input"),
