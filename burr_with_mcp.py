@@ -224,24 +224,43 @@ def _validate_destination(raw_destination: str) -> str:
     return "unknown"
 
 @action(
-    reads=["user_input", "chat_history", "current_mode"],
+    reads=["user_input"],
     writes=["internet_search_results"],
 )
-async def perform_internet_search(state: State, internet_agent: MCPAgent) -> State:
+async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Performing internet search...")
     query = state["user_input"]
-    chat_history = state.get("chat_history", [])
+    
+    # Create a fresh MCP client for each request
+    brave_mcp_config = {
+        "mcpServers": {"brave-search": full_mcp_config["mcpServers"]["brave-search"]}
+    }
+    fresh_client = MCPClient.from_dict(brave_mcp_config)
+    fresh_agent = MCPAgent(llm=common_llm, client=fresh_client, max_steps=5)
+    
+    # Send a simple query without conversation history
+    result = await fresh_agent.run(f"Search for information about: {query}")
 
-    truncated_history = truncate_history(chat_history)
-    history_string = "\n".join(
-        [f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history]
-    )
+    return state.update(internet_search_results=result)
+# @action(
+#     reads=["user_input", "chat_history", "current_mode"],
+#     writes=["internet_search_results"],
+# )
+# async def perform_internet_search(state: State, internet_agent: MCPAgent) -> State:
+#     print(">>> Performing internet search...")
+#     query = state["user_input"]
+#     chat_history = state.get("chat_history", [])
 
-    query_to_send = (
-        f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
-    )
+#     truncated_history = truncate_history(chat_history)
+#     history_string = "\n".join(
+#         [f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history]
+#     )
 
-    result = await internet_agent.run(query_to_send)
+#     query_to_send = (
+#         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
+#     )
+
+#     result = await internet_agent.run(query_to_send)
 
     return state.update(internet_search_results=result)
 
@@ -250,7 +269,7 @@ async def perform_internet_search(state: State, internet_agent: MCPAgent) -> Sta
     reads=["user_input", "chat_history", "current_mode"],
     writes=["github_search_results"],
 )
-async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
+async def perform_github_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Searching GitHub...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -263,8 +282,14 @@ async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
     query_to_send = (
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
+    
+    github_mcp_config = {"mcpServers": {"github": full_mcp_config["mcpServers"]["github"]}}
+    github_mcp_client = MCPClient.from_dict(github_mcp_config)
+    github_mcp_agent = MCPAgent(
+        llm=common_llm, client=github_mcp_client, verbose=True, max_steps=10
+)
 
-    result = await github_agent.run(query_to_send)
+    result = await github_mcp_agent.run(query_to_send)
 
     return state.update(github_search_results=result)
 
@@ -273,7 +298,7 @@ async def perform_github_search(state: State, github_agent: MCPAgent) -> State:
     reads=["user_input", "chat_history", "current_mode"],
     writes=["atlassian_search_results"],
 )
-async def perform_atlassian_search(state: State, atlassian_agent: MCPAgent) -> State:
+async def perform_atlassian_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Searching JIRA...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -286,8 +311,15 @@ async def perform_atlassian_search(state: State, atlassian_agent: MCPAgent) -> S
     query_to_send = (
         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
     )
+    
+    
+    atlassian_mcp_config = {
+        "mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}
+    }
+    atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
+    atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
 
-    result = await atlassian_agent.run(query_to_send)
+    result = await atlassian_mcp_agent.run(query_to_send)
 
     return state.update(atlassian_search_results=result)
 
@@ -330,19 +362,25 @@ def prompt_for_more(state: State) -> State:
     reads=["user_input", "chat_history", "current_mode"],
     writes=["gmaps_results"],
 )
-async def perform_google_maps_search(state: State, gmaps_agent: MCPAgent) -> State:
+async def perform_google_maps_search(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Performing Google Maps search...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
+    
+    gmaps_mcp_config = {
+    "mcpServers": {"google-maps": full_mcp_config["mcpServers"]["google-maps"]}
+    }
+    gmaps_mcp_client = MCPClient.from_dict(gmaps_mcp_config)
+    gmaps_mcp_agent = MCPAgent(llm=common_llm, client=gmaps_mcp_client, max_steps=10)
 
-    result = await gmaps_agent.run(query)
+    result = await gmaps_mcp_agent.run(query)
     return state.update(gmaps_results=result)
 
 @action(
     reads=["user_input", "chat_history", "current_mode"],
     writes=["knowledge_base_results"],
 )
-async def search_knowledge_base(state: State, chroma_agent: MCPAgent) -> State:
+async def search_knowledge_base(state: State, common_llm: ChatOpenAI) -> State:
     print(">>> Searching knowledge base...")
     query = state["user_input"]
     chat_history = state.get("chat_history", [])
@@ -360,7 +398,15 @@ async def search_knowledge_base(state: State, chroma_agent: MCPAgent) -> State:
     )
 
     print(f">>> Sending query to ChromaDB agent: {query_to_send}...")
-    result = await chroma_agent.run(query_to_send)
+    
+    chroma_mcp_config = {
+    "mcpServers": {"chroma": full_mcp_config["mcpServers"]["chroma"]}
+}
+    print(f">>> Chroma MCP config: {chroma_mcp_config}")
+    chroma_mcp_client = MCPClient.from_dict(chroma_mcp_config)
+    chroma_mcp_agent = MCPAgent(llm=common_llm, client=chroma_mcp_client, max_steps=10)
+    
+    result = await chroma_mcp_agent.run(query_to_send)
     print(f">>> ChromaDB Search Result: {result}")
 
     # Make sure we're not returning None or an empty result
@@ -738,53 +784,17 @@ def process_feedback(state: State) -> State:
 common_llm = ChatOpenAI(model="gpt-4o", temperature=0)
 full_mcp_config = add_keys_to_config()
 
-github_mcp_config = {"mcpServers": {"github": full_mcp_config["mcpServers"]["github"]}}
-github_mcp_client = MCPClient.from_dict(github_mcp_config)
-github_mcp_agent = MCPAgent(
-    llm=common_llm, client=github_mcp_client, verbose=True, max_steps=10
-)
-
-brave_mcp_config = {
-    "mcpServers": {"brave-search": full_mcp_config["mcpServers"]["brave-search"]}
-}
-brave_mcp_client = MCPClient.from_dict(brave_mcp_config)
-brave_mcp_agent = MCPAgent(llm=common_llm, client=brave_mcp_client, max_steps=5)
-
-gmaps_mcp_config = {
-    "mcpServers": {"google-maps": full_mcp_config["mcpServers"]["google-maps"]}
-}
-gmaps_mcp_client = MCPClient.from_dict(gmaps_mcp_config)
-gmaps_mcp_agent = MCPAgent(llm=common_llm, client=gmaps_mcp_client, max_steps=10)
-
-atlassian_mcp_config = {
-    "mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}
-}
-atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
-atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
-
-chroma_mcp_config = {
-    "mcpServers": {"chroma": full_mcp_config["mcpServers"]["chroma"]}
-}
-print(f">>> Chroma MCP config: {chroma_mcp_config}")
-chroma_mcp_client = MCPClient.from_dict(chroma_mcp_config)
-chroma_mcp_agent = MCPAgent(llm=common_llm, client=chroma_mcp_client, max_steps=10)
-
-
 graph = (
     graph.GraphBuilder()
     .with_actions(
         get_user_input=get_user_input,
         route_request=route_request.bind(common_llm=common_llm),
         perform_internet_search=perform_internet_search.bind(
-            internet_agent=brave_mcp_agent
+            common_llm=common_llm
         ),
-        perform_github_search=perform_github_search.bind(github_agent=github_mcp_agent),
-        perform_atlassian_search=perform_atlassian_search.bind(
-            atlassian_agent=atlassian_mcp_agent
-        ),
-        search_knowledge_base=search_knowledge_base.bind(
-            chroma_agent=chroma_mcp_agent
-        ),
+        perform_github_search=perform_github_search.bind(common_llm=common_llm),
+        perform_atlassian_search=perform_atlassian_search.bind(common_llm=common_llm),
+        search_knowledge_base=search_knowledge_base.bind(common_llm=common_llm),
         generate_general_ai_response=generate_general_ai_response.bind(
             common_llm=common_llm
         ),
@@ -793,9 +803,7 @@ graph = (
         present_response=present_response,
         
         # Google Maps actions
-        perform_google_maps_search=perform_google_maps_search.bind(
-            gmaps_agent=gmaps_mcp_agent
-        ),
+        perform_google_maps_search=perform_google_maps_search.bind(common_llm=common_llm),
         
         # Email Assistant actions
         start_email_assistant=start_email_assistant,
