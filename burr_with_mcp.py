@@ -27,6 +27,7 @@ DESTINATIONS = {
     "email_assistant": "email_assistant",
     "search_google_maps": "google_maps_search",
     "search_knowledge_base": "knowledge_base_search",
+    "search_sqlite": "sqlite_search",
     "unknown": "unknown",
     "reset_mode": "general",
 }
@@ -69,6 +70,14 @@ MCP_CONFIGS = {
             "--data-dir", 
             "/Users/ryanhaptiq/Projects/mcp-streamlit-demo/chroma/chroma_db"
         ]
+    },
+    "sqlite": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@executeautomation/database-server",
+        "Chinook_Sqlite.db"
+      ]
     }
 }
 
@@ -176,6 +185,7 @@ Respond with ONLY the category name, nothing else. For example:
 - For search queries about the web: "search_internet"
 - For questions about coding repositories: "search_github"
 - For JIRA or Atlassian questions: "search_atlassian"
+- For questions about the internal sqlite DB: "search_sqlite" the name is Chinook_Sqlite.db
 - For help with emails or email drafting: "email_assistant"
 - For general knowledge questions: "general_ai_response"
 - For location or map queries: "search_google_maps"
@@ -226,31 +236,10 @@ async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State
         "mcpServers": {"brave-search": full_mcp_config["mcpServers"]["brave-search"]}
     }
     fresh_client = MCPClient.from_dict(brave_mcp_config)
-    fresh_agent = MCPAgent(llm=common_llm, client=fresh_client, max_steps=5)
+    fresh_agent = MCPAgent(llm=common_llm, client=fresh_client, max_steps=12)
     
     # Send a simple query without conversation history
     result = await fresh_agent.run(f"Search for information about: {query}")
-
-    return state.update(internet_search_results=result)
-# @action(
-#     reads=["user_input", "chat_history", "current_mode"],
-#     writes=["internet_search_results"],
-# )
-# async def perform_internet_search(state: State, internet_agent: MCPAgent) -> State:
-#     print(">>> Performing internet search...")
-#     query = state["user_input"]
-#     chat_history = state.get("chat_history", [])
-
-#     truncated_history = truncate_history(chat_history)
-#     history_string = "\n".join(
-#         [f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history]
-#     )
-
-#     query_to_send = (
-#         f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
-#     )
-
-#     result = await internet_agent.run(query_to_send)
 
     return state.update(internet_search_results=result)
 
@@ -276,12 +265,42 @@ async def perform_github_search(state: State, common_llm: ChatOpenAI) -> State:
     github_mcp_config = {"mcpServers": {"github": full_mcp_config["mcpServers"]["github"]}}
     github_mcp_client = MCPClient.from_dict(github_mcp_config)
     github_mcp_agent = MCPAgent(
-        llm=common_llm, client=github_mcp_client, verbose=True, max_steps=10
+        llm=common_llm, client=github_mcp_client, verbose=True, max_steps=12
 )
 
     result = await github_mcp_agent.run(query_to_send)
 
     return state.update(github_search_results=result)
+
+@action(
+    reads=["user_input", "chat_history", "current_mode"],
+    writes=["sqlite_search_results"],
+)
+async def search_sqlite(state: State, common_llm: ChatOpenAI) -> State:
+    print(">>> Searching sqlite DB...")
+    query = state["user_input"]
+    chat_history = state.get("chat_history", [])
+
+    truncated_history = truncate_history(chat_history)
+    history_string = "\n".join(
+        [f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history]
+    )
+
+    query_to_send = (
+        f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
+    )
+    
+    
+    sqlite_mcp_config = {
+        "mcpServers": {"sqlite": full_mcp_config["mcpServers"]["sqlite"]}
+    }
+    sqlite_mcp_client = MCPClient.from_dict(sqlite_mcp_config)
+    sqlite_mcp_agent = MCPAgent(llm=common_llm, client=sqlite_mcp_client, max_steps=10)
+
+    result = await sqlite_mcp_agent.run(query_to_send)
+    print(f">>> SQLite Search Result in search_sqlite: {result}")
+
+    return state.update(sqlite_search_results=result)
 
 
 @action(
@@ -307,7 +326,7 @@ async def perform_atlassian_search(state: State, common_llm: ChatOpenAI) -> Stat
         "mcpServers": {"atlassian": full_mcp_config["mcpServers"]["atlassian"]}
     }
     atlassian_mcp_client = MCPClient.from_dict(atlassian_mcp_config)
-    atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=5)
+    atlassian_mcp_agent = MCPAgent(llm=common_llm, client=atlassian_mcp_client, max_steps=10)
 
     result = await atlassian_mcp_agent.run(query_to_send)
 
@@ -361,7 +380,7 @@ async def perform_google_maps_search(state: State, common_llm: ChatOpenAI) -> St
     "mcpServers": {"google-maps": full_mcp_config["mcpServers"]["google-maps"]}
     }
     gmaps_mcp_client = MCPClient.from_dict(gmaps_mcp_config)
-    gmaps_mcp_agent = MCPAgent(llm=common_llm, client=gmaps_mcp_client, max_steps=10)
+    gmaps_mcp_agent = MCPAgent(llm=common_llm, client=gmaps_mcp_client, max_steps=15)
 
     result = await gmaps_mcp_agent.run(query)
     return state.update(gmaps_results=result)
@@ -394,7 +413,7 @@ async def search_knowledge_base(state: State, common_llm: ChatOpenAI) -> State:
 }
     print(f">>> Chroma MCP config: {chroma_mcp_config}")
     chroma_mcp_client = MCPClient.from_dict(chroma_mcp_config)
-    chroma_mcp_agent = MCPAgent(llm=common_llm, client=chroma_mcp_client, max_steps=10)
+    chroma_mcp_agent = MCPAgent(llm=common_llm, client=chroma_mcp_client, max_steps=12)
     
     result = await chroma_mcp_agent.run(query_to_send)
     print(f">>> ChromaDB Search Result: {result}")
@@ -439,6 +458,7 @@ def generate_final_response(state: State) -> State:
         "internet_search": ("internet_search_results", "Internet Search Results"),
         "github_search": ("github_search_results", "GitHub Search Results"),
         "atlassian_search": ("atlassian_search_results", "JIRA Search Results"),
+        "sqlite_search": ("sqlite_search_results", "SQLite Search Results"),
         "google_maps_search": ("gmaps_results", "Google Maps Search Results"),
         "general": ("general_ai_response", None)  # No prefix for general response
     }
@@ -640,6 +660,7 @@ graph = (
             common_llm=common_llm
         ),
         perform_github_search=perform_github_search.bind(common_llm=common_llm),
+        search_sqlite=search_sqlite.bind(common_llm=common_llm),
         perform_atlassian_search=perform_atlassian_search.bind(common_llm=common_llm),
         search_knowledge_base=search_knowledge_base.bind(common_llm=common_llm),
         generate_general_ai_response=generate_general_ai_response.bind(
@@ -668,6 +689,7 @@ graph = (
         ("route_request", "search_knowledge_base", when(destination="search_knowledge_base")),
         ("route_request", "generate_general_ai_response", when(destination="general_ai_response")),
         ("route_request", "perform_google_maps_search", when(destination="search_google_maps")),
+        ("route_request", "search_sqlite", when(destination="search_sqlite")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
         
         # Email Assistant simplified flow
@@ -687,6 +709,7 @@ graph = (
         ("search_knowledge_base", "generate_final_response"),
         ("generate_general_ai_response", "generate_final_response"),
         ("perform_google_maps_search", "generate_final_response"),
+        ("search_sqlite", "generate_final_response"),
         # Final response and loop back
         ("generate_final_response", "present_response"),
         ("present_response", "get_user_input"),
