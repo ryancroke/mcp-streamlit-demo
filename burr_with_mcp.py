@@ -23,6 +23,7 @@ DESTINATIONS = {
     "search_internet": "internet_search",
     "search_github": "github_search",
     "search_atlassian": "atlassian_search",
+    "multi_mcp_search": "multi_mcp_search",
     "general_ai_response": "general",
     "email_assistant": "email_assistant",
     "search_google_maps": "google_maps_search",
@@ -147,6 +148,14 @@ async def _determine_destination(state: State, llm: ChatOpenAI) -> State:
     Returns:
         Updated state with destination set
     """
+    if _is_multi_mcp_actions(state["user_input"], llm):
+        destination = "multi_mcp_search"
+        print(f">>> Multi MCP Actions ...")
+        # Log the routing decision
+        current_mode = state.get("current_mode", "general")
+        print(f"Current Mode: {current_mode}, Determined Destination: {destination}")
+        return state.update(destination=destination)
+    
     prompt = _build_routing_prompt(state["user_input"])
     result = await llm.ainvoke(prompt)
     
@@ -159,6 +168,28 @@ async def _determine_destination(state: State, llm: ChatOpenAI) -> State:
     print(f"Current Mode: {current_mode}, Determined Destination: {destination}")
     
     return state.update(destination=destination)
+
+async def _is_multi_mcp_actions(user_input: str, llm: ChatOpenAI ) -> bool:
+    """
+    Checks if the user input contains a multi-MCP action.
+    """
+    
+    prompt = f"""You are a chatbot classifier. Analyze this user input: "{user_input}"
+    
+    Your task is to determine if the user input contains a multi-MCP action.
+    
+    You are to determine if the user wants mutiple actions taken.
+    
+    For Example:
+    - If the user input is "I want to search the web and the github repository for information about the user's query, return "True"
+    - If the user input is "I want to search the web and then use the database SQLlite for information about the user's query, return "True"
+    
+    Otherwise, return "False"
+    """
+
+    result = await llm.ainvoke(prompt)
+    return result.content.strip().lower() == "true"
+
 
 
 def _build_routing_prompt(user_input: str) -> str:
@@ -242,6 +273,33 @@ async def perform_internet_search(state: State, common_llm: ChatOpenAI) -> State
     result = await fresh_agent.run(f"Search for information about: {query}")
 
     return state.update(internet_search_results=result)
+
+@action(
+    reads=["user_input", "chat_history", "current_mode"],
+    writes=["multi_mcp_results"],
+)
+async def multi_mcp_search(state: State, common_llm: ChatOpenAI) -> State:
+    print(">>> Multi MCP Actions ...")
+    query = state["user_input"]
+    chat_history = state.get("chat_history", [])
+
+    truncated_history = truncate_history(chat_history)
+    history_string = "\n".join(
+        [f"{msg['role'].capitalize()}: {msg['content']}" for msg in truncated_history]
+    )
+
+    query_to_send = (
+        f"Conversation History:\n{history_string}\nLatest User Input: {query}\nTask:"
+    )
+    
+    mcp_client = MCPClient.from_dict(full_mcp_config)
+    mcp_agent = MCPAgent(
+        llm=common_llm, client=mcp_client, verbose=True, max_steps=50
+)
+
+    result = await mcp_agent.run(query_to_send)
+
+    return state.update(multi_mcp_results=result)
 
 
 @action(
@@ -434,6 +492,8 @@ async def search_knowledge_base(state: State, common_llm: ChatOpenAI) -> State:
         "general_ai_response",
         "chat_history",
         "destination",
+        "multi_mcp_results",
+        "sqlite_search_results",
         "atlassian_search_results",
         "knowledge_base_results",
         "gmaps_results",
@@ -459,6 +519,7 @@ def generate_final_response(state: State) -> State:
         "github_search": ("github_search_results", "GitHub Search Results"),
         "atlassian_search": ("atlassian_search_results", "JIRA Search Results"),
         "sqlite_search": ("sqlite_search_results", "SQLite Search Results"),
+        "multi_mcp_search": ("multi_mcp_results", "Multi MCP Search Results"),
         "google_maps_search": ("gmaps_results", "Google Maps Search Results"),
         "general": ("general_ai_response", None)  # No prefix for general response
     }
@@ -495,6 +556,8 @@ def generate_final_response(state: State) -> State:
         "user_input",
         "internet_search_results",
         "github_search_results",
+        "multi_mcp_results",
+        "sqlite_search_results",
         "general_ai_response",
         "atlassian_search_results",
         "knowledge_base_results",
@@ -504,6 +567,8 @@ def generate_final_response(state: State) -> State:
         "user_input",
         "internet_search_results",
         "github_search_results",
+        "multi_mcp_results",
+        "sqlite_search_results",
         "general_ai_response",
         "atlassian_search_results",
         "knowledge_base_results",
@@ -516,6 +581,8 @@ def present_response(state: State) -> State:
     user_input_to_clear = None
     internet_results_to_clear = state.get("internet_search_results")
     github_results_to_clear = state.get("github_search_results")
+    multi_mcp_results_to_clear = state.get("multi_mcp_results")
+    sqlite_results_to_clear = state.get("sqlite_search_results")
     atlassian_results_to_clear = state.get("atlassian_search_results")
     general_ai_response_to_clear = state.get("general_ai_response")
     knowledge_base_results_to_clear = state.get("knowledge_base_results")
@@ -532,6 +599,10 @@ def present_response(state: State) -> State:
         gmaps_results_to_clear = None
     if current_mode != "atlassian_search":
         atlassian_results_to_clear = None
+    if current_mode != "sqlite_search":
+        sqlite_results_to_clear = None
+    if current_mode != "multi_mcp_search":
+        multi_mcp_results_to_clear = None
     if current_mode != "general":
         general_ai_response_to_clear = None
 
@@ -541,6 +612,8 @@ def present_response(state: State) -> State:
         github_search_results=github_results_to_clear,
         general_ai_response=general_ai_response_to_clear,
         atlassian_search_results=atlassian_results_to_clear,
+        sqlite_search_results=sqlite_results_to_clear,
+        multi_mcp_results=multi_mcp_results_to_clear,
         knowledge_base_results=knowledge_base_results_to_clear,
         gmaps_results=gmaps_results_to_clear,
     )
@@ -662,6 +735,7 @@ graph = (
         perform_github_search=perform_github_search.bind(common_llm=common_llm),
         search_sqlite=search_sqlite.bind(common_llm=common_llm),
         perform_atlassian_search=perform_atlassian_search.bind(common_llm=common_llm),
+        multi_mcp_search=multi_mcp_search.bind(common_llm=common_llm),
         search_knowledge_base=search_knowledge_base.bind(common_llm=common_llm),
         generate_general_ai_response=generate_general_ai_response.bind(
             common_llm=common_llm
@@ -689,6 +763,7 @@ graph = (
         ("route_request", "search_knowledge_base", when(destination="search_knowledge_base")),
         ("route_request", "generate_general_ai_response", when(destination="general_ai_response")),
         ("route_request", "perform_google_maps_search", when(destination="search_google_maps")),
+        ("route_request", "multi_mcp_search", when(destination="multi_mcp_search")),
         ("route_request", "search_sqlite", when(destination="search_sqlite")),
         ("route_request", "generate_final_response", when(destination="reset_mode")),
         
@@ -706,6 +781,7 @@ graph = (
         ("perform_internet_search", "generate_final_response"),
         ("perform_github_search", "generate_final_response"),
         ("perform_atlassian_search", "generate_final_response"),
+        ("multi_mcp_search", "generate_final_response"),
         ("search_knowledge_base", "generate_final_response"),
         ("generate_general_ai_response", "generate_final_response"),
         ("perform_google_maps_search", "generate_final_response"),

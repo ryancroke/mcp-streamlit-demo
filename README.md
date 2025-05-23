@@ -67,7 +67,6 @@ otherwise
 streamlit run simple_app.py
 ``` 
 # ToDo
-1. There is information bleed in the app. Hunt this down.
-1. Find other improvements. 
-1. Add in sidebar to tell you whcih state you are in. 
-1. Open telemetry for Burr and get that together. 
+1. Create Multi-MCP multi-ask filter/router
+1. Investigate cleaner way to hold servers live
+1. 

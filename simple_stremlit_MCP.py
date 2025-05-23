@@ -38,7 +38,8 @@ def show_server_status(burr_app):
         "Atlassian": "atlassian_search",
         "Knowledge Base": "knowledge_base_search",
         "Google Maps": "google_maps_search",
-        "SQLite": "sqlite_search"
+        "SQLite": "sqlite_search",
+        "Multi MCP": "multi_mcp_search"
     }
     
     # Create the sidebar
