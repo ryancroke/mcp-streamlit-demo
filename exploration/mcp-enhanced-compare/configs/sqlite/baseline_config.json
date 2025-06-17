@@ -1,0 +1,21 @@
+{
+  "mcp_server": {
+    "name": "sqlite_baseline",
+    "type": "sqlite",
+    "command": "uv",
+    "args": [
+      "--directory",
+      "mcp_servers/mcp_sqlite_baseline",
+      "run",
+      "mcp-server-sqlite",
+      "--db-path",
+      "data/Chinook_Sqlite.db"
+    ],
+    "description": "Official SQLite MCP Server - Baseline Version"
+  },
+  "ui_config": {
+    "title": "SQLite Baseline",
+    "color": "#4A90E2",
+    "side": "left"
+  }
+}

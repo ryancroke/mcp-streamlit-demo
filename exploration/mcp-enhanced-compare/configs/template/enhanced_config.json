@@ -1,0 +1,19 @@
+{
+  "mcp_server": {
+    "name": "YOUR_MCP_enhanced",
+    "type": "YOUR_MCP_TYPE", 
+    "command": "your_command",
+    "args": [
+      "your",
+      "enhanced",
+      "args",
+      "here"
+    ],
+    "description": "Enhanced YOUR_MCP Server - Custom Version"
+  },
+  "ui_config": {
+    "title": "YOUR_MCP Enhanced",
+    "color": "#E25A4A",
+    "side": "right"
+  }
+}

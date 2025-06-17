@@ -1,0 +1,154 @@
+"""
+MCP Interface using the established mcp-use pattern from the original project.
+Direct copy of the working factory pattern.
+"""
+
+import json
+import os
+import uuid
+from datetime import datetime
+from typing import Any, Dict
+
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from mcp_use import MCPAgent, MCPClient
+
+load_dotenv()
+
+
+def resolve_config_paths(server_config: dict, project_root: str = None) -> dict:
+    """
+    Resolve relative paths in MCP server configuration to absolute paths.
+
+    Args:
+        server_config: MCP server configuration dictionary
+        project_root: Project root directory (defaults to current working directory)
+
+    Returns:
+        Updated configuration with absolute paths
+    """
+    if project_root is None:
+        # Get project root (current working directory for comparison framework)
+        project_root = os.getcwd()
+
+    # Deep copy to avoid modifying original config
+    import copy
+    resolved_config = copy.deepcopy(server_config)
+
+    # Path-related argument flags that need resolution
+    path_flags = ["--db-path", "--data-dir", "--file", "--path", "--directory"]
+
+    for server_name, server_info in resolved_config.get("mcpServers", {}).items():
+        if "args" in server_info:
+            args = server_info["args"]
+            for i, arg in enumerate(args):
+                # Check if this argument follows a path flag
+                if i > 0 and args[i - 1] in path_flags:
+                    # Convert relative path to absolute path
+                    if not os.path.isabs(arg):
+                        absolute_path = os.path.join(project_root, arg)
+                        resolved_config["mcpServers"][server_name]["args"][i] = absolute_path
+                        print(f"✓ Resolved path: {arg} -> {absolute_path}")
+
+    return resolved_config
+
+
+class MCPInterface:
+    """Generic wrapper for any MCP server using mcp-use pattern"""
+
+    def __init__(self, server_name: str, client: MCPClient, agent: MCPAgent):
+        self.server_name = server_name
+        self.client = client
+        self.agent = agent
+        self.connection_id = str(uuid.uuid4())[:8]
+        self.initialized_at = datetime.now()
+        self.query_count = 0
+        self.last_query_time: datetime | None = None
+
+    async def query(self, task_description: str) -> str:
+        """
+        Sends a natural language task to the agent. The agent will decide
+        which tool to use based on the server's available tools.
+        """
+        self.query_count += 1
+        self.last_query_time = datetime.now()
+
+        if not self.agent:
+            raise RuntimeError(f"{self.server_name}MCP - Not initialized")
+
+        try:
+            result = await self.agent.run(task_description)
+            return result
+        except Exception as e:
+            print(f"❌ {self.server_name}MCP query failed: {e}")
+            raise
+
+    async def health_check(self) -> bool:
+        """Check if the MCP connection is healthy"""
+        if not self.agent or not self.client:
+            return False
+        try:
+            # Try a simple operation for SQLite
+            result = await self.agent.run("List the names of all tables in the database")
+            success = "error" not in str(result).lower() and len(str(result)) > 0
+            return success
+        except Exception as e:
+            print(f"❌ {self.server_name}MCP health check failed: {e}")
+            return False
+
+    def get_connection_info(self) -> dict:
+        """Get debugging info about the connection."""
+        return {
+            "server_name": self.server_name,
+            "connection_id": self.connection_id,
+            "initialized_at": self.initialized_at.isoformat() if self.initialized_at else None,
+            "query_count": self.query_count,
+            "last_query_time": self.last_query_time.isoformat() if self.last_query_time else None,
+            "client_connected": self.client is not None,
+            "agent_available": self.agent is not None,
+            "client_id": id(self.client) if self.client else None,
+            "agent_id": id(self.agent) if self.agent else None,
+        }
+
+    async def close(self):
+        """Clean up resources"""
+        self.client = None
+        self.agent = None
+
+
+async def create_mcp_interface_from_config(
+    server_config: Dict[str, Any],
+    model: str = "gpt-4o-mini", 
+    temperature: float = 0,
+    max_steps: int = 45,
+) -> MCPInterface:
+    """
+    Create MCP interface from server config dict (adapts the original pattern).
+    """
+    try:
+        server_name = server_config["name"]
+        
+        # Convert our config format to the original mcp_config.json format
+        mcp_config = {
+            "mcpServers": {
+                server_name: {
+                    "command": server_config["command"],
+                    "args": server_config["args"]
+                }
+            }
+        }
+
+        # Resolve relative paths to absolute paths
+        resolved_config = resolve_config_paths(mcp_config)
+
+        # Create using mcp-use pattern with configurable parameters
+        client = MCPClient.from_dict(resolved_config)
+        llm = ChatOpenAI(model=model, temperature=temperature)
+        agent = MCPAgent(llm=llm, client=client, max_steps=max_steps)
+
+        print(f"✓ {server_name}MCP interface created successfully")
+        return MCPInterface(server_name, client, agent)
+
+    except Exception as e:
+        print(f"❌ Failed to create {server_config.get('name', 'unknown')}MCP interface: {e}")
+        raise
