@@ -1,0 +1,59 @@
+{
+  "comparison_name": "Your MCP Comparison",
+  "comparison_description": "Comparing baseline vs enhanced versions of your MCP server.",
+  "data_files": ["data/your_data_file.db"],
+  "baseline": {
+    "source": {
+      "type": "github",
+      "repo": "your-org/your-mcp-repo",
+      "branch": "main",
+      "subdirectory": "src/your-mcp",
+      "install_dir": "temp/your_baseline_from_git"
+    },
+    "mcp_server": {
+      "name": "your_mcp_baseline",
+      "type": "your_type",
+      "command": "uv",
+      "args": [
+        "run",
+        "your-mcp-server-command",
+        "--your-args",
+        "data/your_data_file.db"
+      ],
+      "description": "Your MCP Server - Baseline Version"
+    },
+    "ui": {
+      "title": "Your Baseline",
+      "color": "#4A90E2",
+      "icon": "🔵",
+      "side": "left"
+    }
+  },
+  "enhanced": {
+    "source": {
+      "type": "github",
+      "repo": "your-org/your-enhanced-mcp-repo",
+      "branch": "main",
+      "subdirectory": "src/your-mcp",
+      "install_dir": "temp/your_enhanced_from_git"
+    },
+    "mcp_server": {
+      "name": "your_mcp_enhanced",
+      "type": "your_type",
+      "command": "uv",
+      "args": [
+        "run",
+        "your-mcp-server-command",
+        "--your-args",
+        "data/your_data_file.db"
+      ],
+      "description": "Your MCP Server - Enhanced Version"
+    },
+    "ui": {
+      "title": "Your Enhanced",
+      "color": "#E25A4A",
+      "icon": "🔴",
+      "side": "right"
+    }
+  }
+}

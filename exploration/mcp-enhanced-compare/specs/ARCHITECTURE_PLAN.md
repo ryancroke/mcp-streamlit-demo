@@ -13,8 +13,8 @@ The framework has evolved from a proof-of-concept requiring manual code changes 
 ## 2. Implementation Status
 
 **✅ Phase 1: COMPLETED** - Unified and centralized configuration
-**🔄 Phase 2: NEXT** - Dynamic MCP sourcing from GitHub  
-**📋 Phase 3: PLANNED** - Multiple, UI-switchable comparisons
+**✅ Phase 2: COMPLETED** - Dynamic MCP sourcing from GitHub  
+**📋 Phase 3: NEXT** - Multiple, UI-switchable comparisons
 **📋 Phase 4: PLANNED** - Sequential Thinking MCP example
 
 ## 3. Phased Implementation Details
@@ -26,7 +26,7 @@ The framework has evolved from a proof-of-concept requiring manual code changes 
 **✅ Completed Implementation:**
 
 1.  **✅ Created Unified `comparison_config.json`:**
-    *   Instead of separate `baseline_config.json` and `enhanced_config.json`, create a single `configs/sqlite/comparison_config.json`.
+    *   Uses a single unified `configs/sqlite/comparison_config.json` with GitHub source support.
     *   This file will describe the entire comparison: the name, the data files, and the configurations for *both* the baseline and enhanced orchestrators.
 
     **Example: `configs/sqlite/comparison_config.json`**
@@ -92,88 +92,126 @@ The framework has evolved from a proof-of-concept requiring manual code changes 
 
 ---
 
-### Phase 2: Implement Dynamic MCP Sourcing from GitHub
+### Phase 2: Implement Dynamic MCP Sourcing from GitHub ✅ COMPLETED
 
 **Goal:** Enable both baseline and enhanced servers to be sourced directly from Git repositories at startup, allowing for easy testing of the GitHub integration functionality.
 
-**Testing Approach:** To validate the GitHub integration works properly, we'll configure both baseline and enhanced to use the same public SQLite MCP repository (`https://github.com/modelcontextprotocol/servers-archived`) but potentially different branches or subdirectories. This allows us to test the complete GitHub sourcing workflow.
+**Understanding & Approach:**
+- **Current command**: `uv --directory mcp_servers/mcp_sqlite_baseline run mcp-server-sqlite --db-path data/Chinook_Sqlite.db`
+- **GitHub approach**: `uv --directory temp/mcp_baseline_from_git/src/sqlite run mcp-server-sqlite --db-path ../../data/Chinook_Sqlite.db`
+- **Strategy**: Always re-clone for clean state, fail completely if GitHub operations fail
 
 **Actionable Steps:**
 
-1.  **Extend the Configuration Schema:**
-    *   Add an optional `source` object to both `baseline` and `enhanced` configuration blocks. This object will specify the source type and location.
+1. **Extend Configuration Schema:**
+   - Add optional `source` object to baseline/enhanced config blocks
+   - Support `type: "github"` with repo, branch, subdirectory, install_dir
+   - Keep existing local configs working (no source = local mode)
 
-    **Example: Updated `comparison_config.json` with GitHub sources**
-    ```json
-    {
-      "comparison_name": "SQLite MCP Comparison (GitHub-sourced)",
-      "comparison_description": "Comparing SQLite MCP servers sourced directly from GitHub.",
-      "data_files": ["data/Chinook_Sqlite.db"],
-      "baseline": {
-        "source": {
-          "type": "github",
-          "repo": "modelcontextprotocol/servers-archived",
-          "branch": "main",
-          "subdirectory": "src/sqlite",
-          "install_dir": "temp/mcp_baseline_from_git"
-        },
-        "mcp_server": {
-          "name": "sqlite_baseline_git",
-          "command": "uv",
-          "args": [
-            "run",
-            "mcp-server-sqlite",
-            "--db-path", "data/Chinook_Sqlite.db"
-          ]
-        },
-        "ui": {
-          "title": "SQLite Baseline (Git)",
-          "color": "#4A90E2",
-          "icon": "🔵"
-        }
-      },
-      "enhanced": {
-        "source": {
-          "type": "github",
-          "repo": "modelcontextprotocol/servers-archived",
-          "branch": "main",
-          "subdirectory": "src/sqlite",
-          "install_dir": "temp/mcp_enhanced_from_git"
-        },
-        "mcp_server": {
-          "name": "sqlite_enhanced_git",
-          "command": "uv",
-          "args": [
-            "run",
-            "mcp-server-sqlite",
-            "--db-path", "data/Chinook_Sqlite.db"
-          ]
-        },
-        "ui": {
-          "title": "SQLite Enhanced (Git)",
-          "color": "#E25A4A",
-          "icon": "🔴"
-        }
-      }
-    }
-    ```
-    *Note: The `--directory` argument is intentionally removed from `mcp_server.args`. It will be added dynamically. Also added `subdirectory` field to handle repositories where the MCP server is in a subdirectory.*
+   **Example: Updated `comparison_config.json` with GitHub sources**
+   ```json
+   {
+     "comparison_name": "SQLite MCP Comparison (GitHub-sourced)",
+     "comparison_description": "Comparing SQLite MCP servers sourced directly from GitHub.",
+     "data_files": ["data/Chinook_Sqlite.db"],
+     "baseline": {
+       "source": {
+         "type": "github",
+         "repo": "modelcontextprotocol/servers-archived",
+         "branch": "main",
+         "subdirectory": "src/sqlite",
+         "install_dir": "temp/mcp_baseline_from_git"
+       },
+       "mcp_server": {
+         "name": "sqlite_baseline_git",
+         "command": "uv",
+         "args": [
+           "run",
+           "mcp-server-sqlite",
+           "--db-path", "data/Chinook_Sqlite.db"
+         ]
+       },
+       "ui": {
+         "title": "SQLite Baseline (Git)",
+         "color": "#4A90E2",
+         "icon": "🔵"
+       }
+     },
+     "enhanced": {
+       "source": {
+         "type": "github",
+         "repo": "modelcontextprotocol/servers-archived",
+         "branch": "main",
+         "subdirectory": "src/sqlite",
+         "install_dir": "temp/mcp_enhanced_from_git"
+       },
+       "mcp_server": {
+         "name": "sqlite_enhanced_git",
+         "command": "uv",
+         "args": [
+           "run",
+           "mcp-server-sqlite",
+           "--db-path", "data/Chinook_Sqlite.db"
+         ]
+       },
+       "ui": {
+         "title": "SQLite Enhanced (Git)",
+         "color": "#E25A4A",
+         "icon": "🔴"
+       }
+     }
+   }
+   ```
 
-2.  **Update Orchestrator Initialization Logic:**
-    *   In `framework/orchestrator/simple_orchestrator.py`, modify the `initialize` method.
-    *   Before starting the MCP server, it should check for the `source` object in its configuration.
-    *   If a `github` source is found, the orchestrator must:
-        1.  Delete the `install_dir` if it exists to ensure a clean slate.
-        2.  Use a `subprocess` call to `git clone` the specified repository and branch into the `install_dir`.
-        3.  If `subdirectory` is specified, navigate to that subdirectory within the cloned repo.
-        4.  Dynamically modify its own `mcp_server.args` list to insert the `--directory` flag and the path to the correct directory (either `install_dir` or `install_dir/subdirectory`).
-        5.  Proceed with starting the server process as usual.
+2. **Update SimpleMCPOrchestrator:**
+   - Modify `initialize()` method to check for `source` configuration
+   - If GitHub source found:
+     1. Delete install_dir if exists (clean slate)
+     2. `git clone --branch {branch} {repo} {install_dir}`
+     3. Dynamically insert `--directory {install_dir}/{subdirectory}` into args
+     4. Adjust data file paths to be relative from cloned directory
+     5. Run `uv sync` in cloned directory to install dependencies
+     6. Proceed with normal MCP server startup
 
-**Benefits of This Testing Approach:**
-- Validates GitHub integration with a real, public repository
-- Tests the complete workflow without requiring custom repositories
-- Both baseline and enhanced use the same source, making it easy to verify they work identically
-- Later, enhanced can be pointed to a fork or different branch for actual comparison testing
+3. **Path Resolution Strategy:**
+   - Convert relative data paths to absolute paths from project root
+   - This ensures `--db-path ../../data/Chinook_Sqlite.db` works from cloned subdirectory
+
+4. **Error Handling:**
+   - Git clone failures → fail completely with clear error message
+   - Missing subdirectories → fail completely
+   - Dependency installation failures → fail completely
+   - No fallback to local servers
+
+5. **Testing Configuration:**
+   - Create GitHub-sourced config using same repo for both baseline/enhanced
+   - Use `modelcontextprotocol/servers-archived` repo, `src/sqlite` subdirectory
+   - This validates the complete GitHub workflow before introducing actual differences
+
+**Key Technical Details:**
+- **Command structure**: Insert `--directory` at position 0 in args array
+- **Dependencies**: Run `uv sync` in cloned directory before starting MCP server
+- **Cleanup**: Always delete and re-clone (no git pull optimization)
+- **Paths**: Make data file paths absolute to work from any working directory
+
+**✅ Phase 2 Results:**
+- GitHub-driven architecture achieved - no local MCP servers required
+- Automatic repository cloning and dependency installation
+- Dynamic configuration switching between local and GitHub sources
+- Robust error handling for git operations and dependency failures
+- Default configuration now uses GitHub sources (`modelcontextprotocol/servers-archived`)
+- File watcher issues resolved (auto-disables reload for GitHub sources)
+- Temp directory management: clean on startup, preserve for debugging
+- Framework successfully decouples development from testing workflow
+
+**Example Usage:**
+```bash
+# Uses GitHub sources by default
+uv run comparison_app.py
+
+# Custom GitHub configuration
+MCP_COMPARISON_CONFIG=configs/custom/comparison_config.json uv run comparison_app.py
+```
 
 ---
 
@@ -349,6 +387,6 @@ Once these changes are complete, the development and testing workflow will be dr
 
 1.  **Develop:** A developer makes changes to the enhanced MCP server and pushes them to its dedicated GitHub repository.
 2.  **Configure:** The `comparison_config.json` is set up once to point to this GitHub repository.
-3.  **Test:** The user runs `python start.py`.
+3.  **Test:** The user runs `uv run comparison_app.py`.
 4.  **Automate:** The framework automatically fetches the latest code from GitHub, sets up the environment, and starts the comparison UI.
 5.  **Evaluate:** The user can immediately begin comparing the stable baseline against the latest development version, with zero manual intervention.

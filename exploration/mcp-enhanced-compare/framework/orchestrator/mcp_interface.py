@@ -3,11 +3,10 @@ MCP Interface using the established mcp-use pattern from the original project.
 Direct copy of the working factory pattern.
 """
 
-import json
 import os
 import uuid
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
@@ -33,6 +32,7 @@ def resolve_config_paths(server_config: dict, project_root: str = None) -> dict:
 
     # Deep copy to avoid modifying original config
     import copy
+
     resolved_config = copy.deepcopy(server_config)
 
     # Path-related argument flags that need resolution
@@ -47,7 +47,9 @@ def resolve_config_paths(server_config: dict, project_root: str = None) -> dict:
                     # Convert relative path to absolute path
                     if not os.path.isabs(arg):
                         absolute_path = os.path.join(project_root, arg)
-                        resolved_config["mcpServers"][server_name]["args"][i] = absolute_path
+                        resolved_config["mcpServers"][server_name]["args"][i] = (
+                            absolute_path
+                        )
                         print(f"✓ Resolved path: {arg} -> {absolute_path}")
 
     return resolved_config
@@ -89,7 +91,9 @@ class MCPInterface:
             return False
         try:
             # Try a simple operation for SQLite
-            result = await self.agent.run("List the names of all tables in the database")
+            result = await self.agent.run(
+                "List the names of all tables in the database"
+            )
             success = "error" not in str(result).lower() and len(str(result)) > 0
             return success
         except Exception as e:
@@ -101,9 +105,13 @@ class MCPInterface:
         return {
             "server_name": self.server_name,
             "connection_id": self.connection_id,
-            "initialized_at": self.initialized_at.isoformat() if self.initialized_at else None,
+            "initialized_at": self.initialized_at.isoformat()
+            if self.initialized_at
+            else None,
             "query_count": self.query_count,
-            "last_query_time": self.last_query_time.isoformat() if self.last_query_time else None,
+            "last_query_time": self.last_query_time.isoformat()
+            if self.last_query_time
+            else None,
             "client_connected": self.client is not None,
             "agent_available": self.agent is not None,
             "client_id": id(self.client) if self.client else None,
@@ -117,8 +125,8 @@ class MCPInterface:
 
 
 async def create_mcp_interface_from_config(
-    server_config: Dict[str, Any],
-    model: str = "gpt-4o-mini", 
+    server_config: dict[str, Any],
+    model: str = "gpt-4o-mini",
     temperature: float = 0,
     max_steps: int = 45,
 ) -> MCPInterface:
@@ -127,13 +135,13 @@ async def create_mcp_interface_from_config(
     """
     try:
         server_name = server_config["name"]
-        
+
         # Convert our config format to the original mcp_config.json format
         mcp_config = {
             "mcpServers": {
                 server_name: {
                     "command": server_config["command"],
-                    "args": server_config["args"]
+                    "args": server_config["args"],
                 }
             }
         }
@@ -150,5 +158,7 @@ async def create_mcp_interface_from_config(
         return MCPInterface(server_name, client, agent)
 
     except Exception as e:
-        print(f"❌ Failed to create {server_config.get('name', 'unknown')}MCP interface: {e}")
+        print(
+            f"❌ Failed to create {server_config.get('name', 'unknown')}MCP interface: {e}"
+        )
         raise

@@ -8,7 +8,6 @@ import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
-from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -65,11 +64,13 @@ chat_sessions: dict[str, list[ChatMessage]] = {}
 
 def _load_comparison_config() -> dict:
     """Load comparison configuration from environment variable or default path."""
-    config_path = os.getenv("MCP_COMPARISON_CONFIG", "configs/sqlite/comparison_config.json")
+    config_path = os.getenv(
+        "MCP_COMPARISON_CONFIG", "configs/sqlite/comparison_config.json"
+    )
     print(f"📋 Loading comparison config from: {config_path}")
-    
+
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             return json.load(f)
     except Exception as e:
         print(f"❌ Failed to load comparison config: {e}")
@@ -143,12 +144,12 @@ async def get_config():
     """Get UI configuration from the comparison config."""
     if not comparison_config:
         raise HTTPException(status_code=503, detail="Configuration not loaded")
-    
+
     return ConfigResponse(
         comparison_name=comparison_config["comparison_name"],
         comparison_description=comparison_config["comparison_description"],
         baseline=comparison_config["baseline"]["ui"],
-        enhanced=comparison_config["enhanced"]["ui"]
+        enhanced=comparison_config["enhanced"]["ui"],
     )
 
 
@@ -156,7 +157,9 @@ async def get_config():
 async def process_baseline_query(request: QueryRequest):
     """Process query through baseline MCP orchestrator."""
     if not baseline_orchestrator:
-        raise HTTPException(status_code=503, detail="Baseline orchestrator not available")
+        raise HTTPException(
+            status_code=503, detail="Baseline orchestrator not available"
+        )
 
     return await _process_query(request, baseline_orchestrator, "baseline")
 
@@ -165,15 +168,15 @@ async def process_baseline_query(request: QueryRequest):
 async def process_enhanced_query(request: QueryRequest):
     """Process query through enhanced MCP orchestrator."""
     if not enhanced_orchestrator:
-        raise HTTPException(status_code=503, detail="Enhanced orchestrator not available")
+        raise HTTPException(
+            status_code=503, detail="Enhanced orchestrator not available"
+        )
 
     return await _process_query(request, enhanced_orchestrator, "enhanced")
 
 
 async def _process_query(
-    request: QueryRequest, 
-    orchestrator: SimpleMCPOrchestrator, 
-    orchestrator_type: str
+    request: QueryRequest, orchestrator: SimpleMCPOrchestrator, orchestrator_type: str
 ) -> QueryResponse:
     """Shared query processing logic."""
     # Generate thread ID if not provided
@@ -182,11 +185,12 @@ async def _process_query(
     try:
         # Process query through orchestrator
         final_state = await orchestrator.run(
-            user_query=request.message, 
-            thread_id=thread_id
+            user_query=request.message, thread_id=thread_id
         )
 
-        response_content = final_state.get("final_response", "Sorry, an error occurred.")
+        response_content = final_state.get(
+            "final_response", "Sorry, an error occurred."
+        )
         sql_query = final_state.get("sql_query")
         mcp_server_name = final_state.get("mcp_server_name", f"{orchestrator_type}_mcp")
         timestamp = datetime.now().isoformat()
@@ -198,11 +202,7 @@ async def _process_query(
 
         # Add user message
         chat_sessions[session_key].append(
-            ChatMessage(
-                role="user", 
-                content=request.message, 
-                timestamp=timestamp
-            )
+            ChatMessage(role="user", content=request.message, timestamp=timestamp)
         )
 
         # Add assistant response
@@ -226,8 +226,8 @@ async def _process_query(
     except Exception as e:
         print(f"❌ {orchestrator_type.title()} query processing failed: {e}")
         raise HTTPException(
-            status_code=500, 
-            detail=f"{orchestrator_type.title()} query processing failed: {str(e)}"
+            status_code=500,
+            detail=f"{orchestrator_type.title()} query processing failed: {e!s}",
         ) from e
 
 
@@ -251,8 +251,7 @@ async def get_enhanced_chat_history(thread_id: str):
 async def clear_baseline_chat_history(thread_id: str):
     """Clear baseline chat history for a thread."""
     session_key = f"baseline_{thread_id}"
-    if session_key in chat_sessions:
-        del chat_sessions[session_key]
+    chat_sessions.pop(session_key, None)
     return {"message": "Baseline chat history cleared"}
 
 
@@ -260,8 +259,7 @@ async def clear_baseline_chat_history(thread_id: str):
 async def clear_enhanced_chat_history(thread_id: str):
     """Clear enhanced chat history for a thread."""
     session_key = f"enhanced_{thread_id}"
-    if session_key in chat_sessions:
-        del chat_sessions[session_key]
+    chat_sessions.pop(session_key, None)
     return {"message": "Enhanced chat history cleared"}
 
 
@@ -285,14 +283,20 @@ async def health_check():
         except Exception as e:
             print(f"Enhanced health check failed: {e}")
 
-    overall_status = "healthy" if (baseline_healthy and enhanced_healthy) else "degraded"
+    overall_status = (
+        "healthy" if (baseline_healthy and enhanced_healthy) else "degraded"
+    )
 
     return {
         "status": overall_status,
         "baseline_healthy": baseline_healthy,
         "enhanced_healthy": enhanced_healthy,
-        "baseline_orchestrator": "ready" if baseline_orchestrator else "not_initialized",
-        "enhanced_orchestrator": "ready" if enhanced_orchestrator else "not_initialized",
+        "baseline_orchestrator": "ready"
+        if baseline_orchestrator
+        else "not_initialized",
+        "enhanced_orchestrator": "ready"
+        if enhanced_orchestrator
+        else "not_initialized",
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -301,10 +305,24 @@ if __name__ == "__main__":
     print("🎵 Starting MCP Comparison Framework")
     print("📍 Open: http://localhost:8001")
 
+    # Check if using GitHub sources (disable reload to avoid infinite loops)
+    config_path = os.getenv("MCP_COMPARISON_CONFIG", "configs/sqlite/comparison_config.json")
+    use_reload = True
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+            # Disable reload if any source uses GitHub
+            if (config.get("baseline", {}).get("source", {}).get("type") == "github" or 
+                config.get("enhanced", {}).get("source", {}).get("type") == "github"):
+                use_reload = False
+                print("🔄 GitHub sources detected - disabling reload to prevent loops")
+    except Exception:
+        pass  # Use default reload=True if config can't be read
+
     uvicorn.run(
         "comparison_app:app", 
         host="0.0.0.0", 
         port=8001, 
-        reload=True, 
+        reload=use_reload,
         log_level="info"
     )

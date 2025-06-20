@@ -1,46 +1,56 @@
 {
   "comparison_name": "SQLite MCP Comparison",
-  "comparison_description": "Comparing the official SQLite MCP with an enhanced version.",
+  "comparison_description": "Comparing SQLite MCP servers sourced directly from GitHub repositories.",
   "data_files": ["data/Chinook_Sqlite.db"],
   "baseline": {
+    "source": {
+      "type": "github",
+      "repo": "modelcontextprotocol/servers-archived",
+      "branch": "main",
+      "subdirectory": "src/sqlite",
+      "install_dir": "temp/mcp_baseline_from_git"
+    },
     "mcp_server": {
       "name": "sqlite_baseline",
       "type": "sqlite",
       "command": "uv",
       "args": [
-        "--directory",
-        "mcp_servers/mcp_sqlite_baseline",
         "run",
         "mcp-server-sqlite",
         "--db-path",
         "data/Chinook_Sqlite.db"
       ],
-      "description": "Official SQLite MCP Server - Baseline Version"
+      "description": "Official SQLite MCP Server from GitHub - Baseline Version"
     },
     "ui": {
-      "title": "SQLite Baseline",
+      "title": "SQLite Baseline (GitHub)",
       "color": "#4A90E2",
       "icon": "🔵",
       "side": "left"
     }
   },
   "enhanced": {
+    "source": {
+      "type": "github",
+      "repo": "modelcontextprotocol/servers-archived",
+      "branch": "main",
+      "subdirectory": "src/sqlite",
+      "install_dir": "temp/mcp_enhanced_from_git"
+    },
     "mcp_server": {
       "name": "sqlite_enhanced",
       "type": "sqlite",
       "command": "uv",
       "args": [
-        "--directory",
-        "mcp_servers/mcp_sqlite_enhanced",
         "run",
         "mcp-server-sqlite",
         "--db-path",
         "data/Chinook_Sqlite.db"
       ],
-      "description": "Enhanced SQLite MCP Server - Custom Version"
+      "description": "Enhanced SQLite MCP Server from GitHub - Custom Version"
     },
     "ui": {
-      "title": "SQLite Enhanced",
+      "title": "SQLite Enhanced (GitHub)",
       "color": "#E25A4A",
       "icon": "🔴",
       "side": "right"
