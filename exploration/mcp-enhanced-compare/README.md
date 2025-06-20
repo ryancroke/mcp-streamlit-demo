@@ -4,6 +4,7 @@ A reusable, configuration-driven framework for comparing baseline vs enhanced MC
 
 ## Features
 
+- **✅ Multi-Comparison Switching**: Real-time switching between different MCP types via web UI dropdown
 - **✅ GitHub Integration**: Automatically clones MCP servers from any GitHub repository
 - **✅ Configuration-Driven**: Fully configurable through JSON files - no hardcoded paths or UI text
 - **✅ Dynamic UI**: Interface adapts automatically to configuration (titles, colors, icons)
@@ -11,7 +12,7 @@ A reusable, configuration-driven framework for comparing baseline vs enhanced MC
 - **✅ Real-time Comparison**: See how different MCP implementations handle the same queries
 - **✅ Environment Variables**: Flexible deployment with `MCP_COMPARISON_CONFIG` support
 - **✅ Evaluation Support**: Built for systematic testing and comparison
-- **✅ Clean Architecture**: Simplified orchestrator without complex A2A agents
+- **✅ Clean Architecture**: ComparisonManager handles multiple MCP configurations seamlessly
 
 ## 🚀 Current Status
 
@@ -27,8 +28,14 @@ A reusable, configuration-driven framework for comparing baseline vs enhanced MC
 - No local MCP servers required
 - Intelligent file watching (disabled for GitHub sources)
 
-**Phase 3 📋 NEXT**: Multi-comparison UI switching  
-**Phase 4 📋 PLANNED**: Sequential Thinking MCP example
+**Phase 3 ✅ COMPLETED**: Multi-comparison UI switching
+- Real-time switching between different MCP types via dropdown selector
+- ComparisonManager for handling multiple comparison configurations
+- Automatic discovery and loading of comparison configurations
+- Conversation isolation between different comparison types
+- Template directory exclusion for clean configuration management
+
+**Phase 4 📋 NEXT**: Sequential Thinking MCP example
 
 ## Quick Start
 
@@ -50,6 +57,9 @@ A reusable, configuration-driven framework for comparing baseline vs enhanced MC
 
 3. **Open Browser**:
    Navigate to http://localhost:8001
+   
+4. **Switch Between Comparisons**:
+   Use the dropdown selector in the header to switch between available MCP comparisons
 
 ## Configuration
 
@@ -73,12 +83,12 @@ MCP_COMPARISON_CONFIG=configs/your_custom/comparison_config.json uv run comparis
 ```
 mcp-enhanced-compare/
 ├── framework/              # Reusable comparison framework
-│   ├── dual_chat_ui/      # Side-by-side chat interface
+│   ├── comparison_manager.py    # Multi-comparison management
+│   ├── dual_chat_ui/      # Side-by-side chat interface with comparison selector
 │   └── orchestrator/      # GitHub-enabled orchestrator
 ├── configs/               # MCP-specific configurations
 │   ├── sqlite/           # SQLite MCP comparison config (GitHub sources)
-│   ├── sqlite-github/    # Alternative GitHub configuration
-│   └── template/         # Template for new MCP comparisons
+│   └── template/         # Template for new MCP comparisons (excluded from loading)
 ├── temp/                 # Auto-generated (git-ignored)
 │   ├── mcp_baseline_from_git/   # Cloned baseline MCP server
 │   └── mcp_enhanced_from_git/   # Cloned enhanced MCP server
@@ -126,10 +136,12 @@ See `configs/sqlite/comparison_config.json` for the complete GitHub-enabled exam
 
 ## Usage
 
-1. Type queries in either the baseline (left) or enhanced (right) chat panel
-2. Each panel maintains its own conversation thread
-3. Compare responses, SQL queries, and performance
-4. Use example queries to test common scenarios
+1. **Select a comparison** from the dropdown in the header (if multiple comparisons are available)
+2. Type queries in either the baseline (left) or enhanced (right) chat panel
+3. Each panel maintains its own conversation thread, isolated per comparison type
+4. Compare responses, SQL queries, and performance
+5. Switch between comparison types to test different MCP implementations
+6. Use example queries to test common scenarios
 
 ## Adding New MCP Comparisons
 
@@ -138,12 +150,17 @@ See `configs/sqlite/comparison_config.json` for the complete GitHub-enabled exam
    - GitHub repository details
    - MCP server command and arguments  
    - UI customization (titles, colors, icons)
-3. **Run with your config**: 
+3. **Restart the application**: 
    ```bash
-   MCP_COMPARISON_CONFIG=configs/your_mcp/comparison_config.json uv run comparison_app.py
+   uv run comparison_app.py
    ```
-
-The framework automatically clones, installs, and runs your MCP servers - no local setup needed!
+   
+The framework automatically:
+- **Discovers** your new comparison configuration
+- **Clones** the GitHub repositories
+- **Installs** dependencies
+- **Adds** your comparison to the dropdown selector
+- **No manual configuration** needed!
 
 ## Commands
 

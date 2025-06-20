@@ -8,6 +8,7 @@ class MCPComparisonChat {
         this.elements = {
             // Page elements
             pageTitle: document.getElementById('pageTitle'),
+            comparisonSelect: document.getElementById('comparisonSelect'),
             
             // Baseline elements
             baselineMessages: document.getElementById('baselineMessages'),
@@ -45,6 +46,7 @@ class MCPComparisonChat {
     }
     
     async initialize() {
+        await this.loadAvailableComparisons();
         await this.loadConfig();
         this.updateUI();
         await this.checkHealth();
@@ -78,6 +80,114 @@ class MCPComparisonChat {
                 }
             };
         }
+    }
+    
+    async loadAvailableComparisons() {
+        try {
+            const response = await fetch('/api/comparisons/list');
+            if (!response.ok) {
+                throw new Error(`Failed to load comparisons: ${response.statusText}`);
+            }
+            const data = await response.json();
+            this.populateComparisonSelector(data.comparisons);
+        } catch (error) {
+            console.error('Failed to load available comparisons:', error);
+            this.elements.comparisonSelect.innerHTML = '<option value="">Error loading comparisons</option>';
+        }
+    }
+    
+    populateComparisonSelector(comparisons) {
+        this.elements.comparisonSelect.innerHTML = '';
+        
+        comparisons.forEach(comparison => {
+            const option = document.createElement('option');
+            option.value = comparison.id;
+            option.textContent = comparison.name;
+            this.elements.comparisonSelect.appendChild(option);
+        });
+        
+        // Get current active comparison and select it
+        this.getCurrentComparison().then(currentComparison => {
+            if (currentComparison && currentComparison.comparison_id) {
+                this.elements.comparisonSelect.value = currentComparison.comparison_id;
+            }
+        });
+    }
+    
+    async getCurrentComparison() {
+        try {
+            const response = await fetch('/api/comparisons/current');
+            if (!response.ok) {
+                throw new Error(`Failed to get current comparison: ${response.statusText}`);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error('Failed to get current comparison:', error);
+            return null;
+        }
+    }
+    
+    async switchComparison(comparisonId) {
+        if (!comparisonId) return;
+        
+        try {
+            // Show loading state
+            this.setLoadingState(true);
+            
+            const response = await fetch('/api/comparisons/switch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ comparison_id: comparisonId })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to switch comparison: ${response.statusText}`);
+            }
+            
+            // Reload config and update UI
+            await this.loadConfig();
+            this.updateUI();
+            
+            // Clear chat histories for new comparison
+            this.clearAllMessages();
+            
+            // Generate new thread IDs
+            this.baselineThreadId = this.generateThreadId();
+            this.enhancedThreadId = this.generateThreadId();
+            
+            // Check health of new comparison
+            await this.checkHealth();
+            
+        } catch (error) {
+            console.error('Failed to switch comparison:', error);
+            alert('Failed to switch comparison. Please try again.');
+        } finally {
+            this.setLoadingState(false);
+        }
+    }
+    
+    setLoadingState(loading) {
+        this.elements.baselineInput.disabled = loading;
+        this.elements.enhancedInput.disabled = loading;
+        this.elements.baselineSendButton.disabled = loading;
+        this.elements.enhancedSendButton.disabled = loading;
+        this.elements.comparisonSelect.disabled = loading;
+    }
+    
+    clearAllMessages() {
+        // Clear baseline messages except welcome
+        const baselineMessages = this.elements.baselineMessages;
+        const baselineWelcome = document.getElementById('baselineWelcome');
+        baselineMessages.innerHTML = '';
+        baselineMessages.appendChild(baselineWelcome);
+        
+        // Clear enhanced messages except welcome
+        const enhancedMessages = this.elements.enhancedMessages;
+        const enhancedWelcome = document.getElementById('enhancedWelcome');
+        enhancedMessages.innerHTML = '';
+        enhancedMessages.appendChild(enhancedWelcome);
     }
     
     updateUI() {
@@ -145,6 +255,11 @@ class MCPComparisonChat {
     }
     
     setupEventListeners() {
+        // Comparison selector
+        this.elements.comparisonSelect.addEventListener('change', (e) => {
+            this.switchComparison(e.target.value);
+        });
+        
         // Baseline chat
         this.elements.baselineInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
