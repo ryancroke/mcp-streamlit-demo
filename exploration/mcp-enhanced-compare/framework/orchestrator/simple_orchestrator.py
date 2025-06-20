@@ -25,16 +25,22 @@ class State(TypedDict):
 class SimpleMCPOrchestrator:
     """Simple orchestrator with LangGraph memory and MCP agent."""
     
-    def __init__(self, config_path: str):
-        self.config_path = config_path
-        self.config = self._load_config()
+    def __init__(self, config: dict | str):
+        if isinstance(config, str):
+            # Legacy mode: config_path provided
+            self.config_path = config
+            self.config = self._load_config_from_file()
+        else:
+            # New mode: config dict provided
+            self.config_path = None
+            self.config = config
         self.mcp_interface: MCPInterface | None = None
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self.checkpointer = InMemorySaver()
         self.graph = None
 
-    def _load_config(self) -> dict:
-        """Load MCP server configuration."""
+    def _load_config_from_file(self) -> dict:
+        """Load MCP server configuration from file."""
         with open(self.config_path, 'r') as f:
             return json.load(f)
 

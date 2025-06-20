@@ -1,14 +1,28 @@
 # MCP Comparison Framework
 
-A reusable framework for comparing baseline vs enhanced MCP (Model Context Protocol) servers side-by-side.
+A reusable, configuration-driven framework for comparing baseline vs enhanced MCP (Model Context Protocol) servers side-by-side.
 
 ## Features
 
-- **Dual-Chat Interface**: Separate conversation threads for baseline and enhanced versions
-- **Real-time Comparison**: See how different MCP implementations handle the same queries
-- **Easy Configuration**: Swap different MCP servers through configuration files
-- **Evaluation Support**: Built for systematic testing and comparison
-- **Clean Architecture**: Simplified orchestrator without complex A2A agents
+- **✅ Configuration-Driven**: Fully configurable through JSON files - no hardcoded paths or UI text
+- **✅ Dynamic UI**: Interface adapts automatically to configuration (titles, colors, icons)
+- **✅ Dual-Chat Interface**: Separate conversation threads for baseline and enhanced versions
+- **✅ Real-time Comparison**: See how different MCP implementations handle the same queries
+- **✅ Environment Variables**: Flexible deployment with `MCP_COMPARISON_CONFIG` support
+- **✅ Evaluation Support**: Built for systematic testing and comparison
+- **✅ Clean Architecture**: Simplified orchestrator without complex A2A agents
+
+## 🚀 Current Status
+
+**Phase 1 ✅ COMPLETED**: Unified Configuration System
+- Single configuration file per comparison type
+- Dynamic UI population from API
+- Environment variable support
+- Backward compatibility maintained
+
+**Phase 2 🔄 NEXT**: GitHub Integration for dynamic MCP sourcing
+**Phase 3 📋 PLANNED**: Multi-comparison UI switching  
+**Phase 4 📋 PLANNED**: Sequential Thinking MCP example
 
 ## Quick Start
 
@@ -19,11 +33,23 @@ A reusable framework for comparing baseline vs enhanced MCP (Model Context Proto
 
 2. **Run the Application**:
    ```bash
-   python comparison_app.py
+   uv run comparison_app.py
    ```
 
 3. **Open Browser**:
    Navigate to http://localhost:8001
+
+## Configuration
+
+The framework now uses a unified configuration system. Set the comparison type via environment variable:
+
+```bash
+# Use default SQLite comparison
+uv run comparison_app.py
+
+# Use custom configuration
+MCP_COMPARISON_CONFIG=configs/your_comparison/comparison_config.json uv run comparison_app.py
+```
 
 ## Directory Structure
 
@@ -43,13 +69,27 @@ mcp-enhanced-compare/
 └── experiments/          # Results and test data
 ```
 
-## Configuration
+## Configuration Format
 
-Each MCP comparison requires two configuration files:
-- `baseline_config.json`: Configuration for the baseline MCP server
-- `enhanced_config.json`: Configuration for the enhanced MCP server
+Each MCP comparison uses a single unified configuration file with this structure:
 
-See `configs/sqlite/` for examples.
+```json
+{
+  "comparison_name": "SQLite MCP Comparison",
+  "comparison_description": "Comparing baseline vs enhanced versions",
+  "data_files": ["data/Chinook_Sqlite.db"],
+  "baseline": {
+    "mcp_server": { /* MCP server config */ },
+    "ui": { "title": "Baseline", "color": "#4A90E2", "icon": "🔵" }
+  },
+  "enhanced": {
+    "mcp_server": { /* MCP server config */ },
+    "ui": { "title": "Enhanced", "color": "#E25A4A", "icon": "🔴" }
+  }
+}
+```
+
+See `configs/sqlite/comparison_config.json` for a complete example.
 
 ## Current Implementation
 
@@ -67,13 +107,20 @@ See `configs/sqlite/` for examples.
 ## Adding New MCP Comparisons
 
 1. Create new config directory: `configs/your_mcp/`
-2. Add baseline and enhanced configuration files
-3. Update the comparison app to load your configs
+2. Create `comparison_config.json` with unified configuration
+3. Set `MCP_COMPARISON_CONFIG` environment variable to your config path
 4. Copy or create your MCP server implementations
+
+The framework automatically adapts to your configuration - no code changes needed!
 
 ## Commands
 
-- **Run**: `python comparison_app.py`
+- **Run**: `uv run comparison_app.py`
 - **Format**: `ruff format .`
 - **Lint**: `ruff check .`
 - **Type Check**: `mypy .`
+- **Fix Lint**: `ruff check --fix .`
+
+## Architecture
+
+See `specs/ARCHITECTURE_PLAN.md` for detailed implementation phases and future roadmap.

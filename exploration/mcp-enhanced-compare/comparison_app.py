@@ -3,6 +3,8 @@ FastAPI backend for MCP Comparison Framework.
 Supports dual-chat interface with separate baseline and enhanced MCP servers.
 """
 
+import json
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -43,26 +45,52 @@ class ChatHistoryResponse(BaseModel):
     thread_id: str
 
 
+class ConfigResponse(BaseModel):
+    comparison_name: str
+    comparison_description: str
+    baseline: dict
+    enhanced: dict
+
+
 # Global orchestrator instances
 baseline_orchestrator: SimpleMCPOrchestrator | None = None
 enhanced_orchestrator: SimpleMCPOrchestrator | None = None
 
+# Global configuration
+comparison_config: dict | None = None
+
 # In-memory chat history (in production, use a database)
 chat_sessions: dict[str, list[ChatMessage]] = {}
+
+
+def _load_comparison_config() -> dict:
+    """Load comparison configuration from environment variable or default path."""
+    config_path = os.getenv("MCP_COMPARISON_CONFIG", "configs/sqlite/comparison_config.json")
+    print(f"📋 Loading comparison config from: {config_path}")
+    
+    try:
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load comparison config: {e}")
+        raise
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
-    global baseline_orchestrator, enhanced_orchestrator
+    global baseline_orchestrator, enhanced_orchestrator, comparison_config
     print("🚀 Starting MCP Comparison Framework...")
+
+    # Load comparison configuration
+    comparison_config = _load_comparison_config()
+    print(f"✅ Loaded comparison: {comparison_config['comparison_name']}")
 
     # Initialize baseline orchestrator
     print("🔄 Initializing Baseline MCP Orchestrator...")
     try:
-        baseline_config_path = Path("configs/sqlite/baseline_config.json")
-        baseline_orchestrator = SimpleMCPOrchestrator(str(baseline_config_path))
+        baseline_orchestrator = SimpleMCPOrchestrator(comparison_config["baseline"])
         await baseline_orchestrator.initialize()
         print("✅ Baseline MCP Orchestrator ready!")
     except Exception as e:
@@ -72,8 +100,7 @@ async def lifespan(app: FastAPI):
     # Initialize enhanced orchestrator
     print("🔄 Initializing Enhanced MCP Orchestrator...")
     try:
-        enhanced_config_path = Path("configs/sqlite/enhanced_config.json")
-        enhanced_orchestrator = SimpleMCPOrchestrator(str(enhanced_config_path))
+        enhanced_orchestrator = SimpleMCPOrchestrator(comparison_config["enhanced"])
         await enhanced_orchestrator.initialize()
         print("✅ Enhanced MCP Orchestrator ready!")
     except Exception as e:
@@ -109,6 +136,20 @@ app.mount("/static", StaticFiles(directory="framework/dual_chat_ui"), name="stat
 async def get_chat_interface():
     """Serve the main comparison chat interface."""
     return FileResponse("framework/dual_chat_ui/index.html")
+
+
+@app.get("/api/config", response_model=ConfigResponse)
+async def get_config():
+    """Get UI configuration from the comparison config."""
+    if not comparison_config:
+        raise HTTPException(status_code=503, detail="Configuration not loaded")
+    
+    return ConfigResponse(
+        comparison_name=comparison_config["comparison_name"],
+        comparison_description=comparison_config["comparison_description"],
+        baseline=comparison_config["baseline"]["ui"],
+        enhanced=comparison_config["enhanced"]["ui"]
+    )
 
 
 @app.post("/api/baseline/query", response_model=QueryResponse)

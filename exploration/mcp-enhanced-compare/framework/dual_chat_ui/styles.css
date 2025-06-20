@@ -1,4 +1,9 @@
 /* MCP Comparison Chat Styles */
+:root {
+    --baseline-color: #4A90E2;
+    --enhanced-color: #E25A4A;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -58,11 +63,11 @@ body {
 }
 
 .status-dot.baseline {
-    background-color: #4A90E2;
+    background-color: var(--baseline-color);
 }
 
 .status-dot.enhanced {
-    background-color: #E25A4A;
+    background-color: var(--enhanced-color);
 }
 
 @keyframes pulse {
@@ -93,11 +98,11 @@ body {
 }
 
 .baseline-panel {
-    border-left: 4px solid #4A90E2;
+    border-left: 4px solid var(--baseline-color);
 }
 
 .enhanced-panel {
-    border-left: 4px solid #E25A4A;
+    border-left: 4px solid var(--enhanced-color);
 }
 
 /* Panel Headers */
@@ -114,11 +119,11 @@ body {
 }
 
 .baseline-panel h2 {
-    color: #4A90E2;
+    color: var(--baseline-color);
 }
 
 .enhanced-panel h2 {
-    color: #E25A4A;
+    color: var(--enhanced-color);
 }
 
 .panel-subtitle {
@@ -234,11 +239,11 @@ body {
 }
 
 .baseline-btn {
-    background: linear-gradient(135deg, #4A90E2 0%, #357ABD 100%);
+    background: linear-gradient(135deg, var(--baseline-color) 0%, #357ABD 100%);
 }
 
 .enhanced-btn {
-    background: linear-gradient(135deg, #E25A4A 0%, #C44536 100%);
+    background: linear-gradient(135deg, var(--enhanced-color) 0%, #C44536 100%);
 }
 
 .send-btn:hover:not(:disabled) {

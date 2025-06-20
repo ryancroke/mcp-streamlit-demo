@@ -3,14 +3,23 @@ class MCPComparisonChat {
     constructor() {
         this.baselineThreadId = this.generateThreadId();
         this.enhancedThreadId = this.generateThreadId();
+        this.config = null;
         
         this.elements = {
+            // Page elements
+            pageTitle: document.getElementById('pageTitle'),
+            
             // Baseline elements
             baselineMessages: document.getElementById('baselineMessages'),
             baselineInput: document.getElementById('baselineInput'),
             baselineSendButton: document.getElementById('baselineSendButton'),
             baselineLoading: document.getElementById('baselineLoading'),
             baselineStatus: document.getElementById('baselineStatus'),
+            baselineTitle: document.getElementById('baselineTitle'),
+            baselineSubtitle: document.getElementById('baselineSubtitle'),
+            baselineAvatar: document.getElementById('baselineAvatar'),
+            baselineWelcomeTitle: document.getElementById('baselineWelcomeTitle'),
+            baselineWelcomeText: document.getElementById('baselineWelcomeText'),
             
             // Enhanced elements
             enhancedMessages: document.getElementById('enhancedMessages'),
@@ -18,6 +27,11 @@ class MCPComparisonChat {
             enhancedSendButton: document.getElementById('enhancedSendButton'),
             enhancedLoading: document.getElementById('enhancedLoading'),
             enhancedStatus: document.getElementById('enhancedStatus'),
+            enhancedTitle: document.getElementById('enhancedTitle'),
+            enhancedSubtitle: document.getElementById('enhancedSubtitle'),
+            enhancedAvatar: document.getElementById('enhancedAvatar'),
+            enhancedWelcomeTitle: document.getElementById('enhancedWelcomeTitle'),
+            enhancedWelcomeText: document.getElementById('enhancedWelcomeText'),
             
             // Example queries
             exampleQueries: document.querySelectorAll('.example-query')
@@ -31,9 +45,69 @@ class MCPComparisonChat {
     }
     
     async initialize() {
+        await this.loadConfig();
+        this.updateUI();
         await this.checkHealth();
         this.setupEventListeners();
         this.enableInputs();
+    }
+    
+    async loadConfig() {
+        try {
+            const response = await fetch('/api/config');
+            if (!response.ok) {
+                throw new Error(`Failed to load config: ${response.statusText}`);
+            }
+            this.config = await response.json();
+            console.log('Loaded config:', this.config);
+        } catch (error) {
+            console.error('Failed to load configuration:', error);
+            // Fallback to default values
+            this.config = {
+                comparison_name: "MCP Comparison",
+                comparison_description: "Comparing baseline vs enhanced MCP servers",
+                baseline: {
+                    title: "Baseline MCP",
+                    icon: "🔵",
+                    color: "#4A90E2"
+                },
+                enhanced: {
+                    title: "Enhanced MCP", 
+                    icon: "🔴",
+                    color: "#E25A4A"
+                }
+            };
+        }
+    }
+    
+    updateUI() {
+        if (!this.config) return;
+        
+        // Update page title
+        this.elements.pageTitle.textContent = `🎵 ${this.config.comparison_name}`;
+        document.title = `🎵 ${this.config.comparison_name}`;
+        
+        // Update baseline UI
+        const baseline = this.config.baseline;
+        this.elements.baselineTitle.textContent = `${baseline.icon} ${baseline.title}`;
+        this.elements.baselineSubtitle.textContent = baseline.subtitle || "Baseline Version";
+        this.elements.baselineAvatar.textContent = baseline.icon;
+        this.elements.baselineWelcomeTitle.textContent = `${baseline.title} Ready!`;
+        this.elements.baselineWelcomeText.textContent = `This is the ${baseline.title.toLowerCase()}. ${this.config.comparison_description}`;
+        this.elements.baselineInput.placeholder = `Ask the ${baseline.title.toLowerCase()}...`;
+        
+        // Update enhanced UI  
+        const enhanced = this.config.enhanced;
+        this.elements.enhancedTitle.textContent = `${enhanced.icon} ${enhanced.title}`;
+        this.elements.enhancedSubtitle.textContent = enhanced.subtitle || "Enhanced Version";
+        this.elements.enhancedAvatar.textContent = enhanced.icon;
+        this.elements.enhancedWelcomeTitle.textContent = `${enhanced.title} Ready!`;
+        this.elements.enhancedWelcomeText.textContent = `This is the ${enhanced.title.toLowerCase()}. ${this.config.comparison_description}`;
+        this.elements.enhancedInput.placeholder = `Ask the ${enhanced.title.toLowerCase()}...`;
+        
+        // Update colors via CSS custom properties
+        document.documentElement.style.setProperty('--baseline-color', baseline.color);
+        document.documentElement.style.setProperty('--enhanced-color', enhanced.color);
     }
     
     async checkHealth() {
@@ -162,8 +236,21 @@ class MCPComparisonChat {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role === 'user' ? 'user-message' : ''}`;
         
-        const avatar = role === 'user' ? '👤' : (type === 'baseline' ? '🔵' : '🔴');
-        const roleLabel = role === 'user' ? 'You' : (type === 'baseline' ? 'Baseline' : 'Enhanced');
+        let avatar, roleLabel;
+        if (role === 'user') {
+            avatar = '👤';
+            roleLabel = 'You';
+        } else {
+            // Use config for assistant avatars and labels
+            if (this.config && this.config[type]) {
+                avatar = this.config[type].icon;
+                roleLabel = this.config[type].title;
+            } else {
+                // Fallback
+                avatar = type === 'baseline' ? '🔵' : '🔴';
+                roleLabel = type === 'baseline' ? 'Baseline' : 'Enhanced';
+            }
+        }
         
         let messageHTML = `
             <div class="message-avatar">${avatar}</div>

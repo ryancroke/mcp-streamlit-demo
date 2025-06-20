@@ -13,7 +13,7 @@
     <!-- Header -->
     <header class="header">
         <div class="header-center">
-            <h1>🎵 MCP Comparison Chat</h1>
+            <h1 id="pageTitle">🎵 MCP Comparison Chat</h1>
             <div class="comparison-info">
                 <div class="status-indicator" id="baselineStatus">
                     <span class="status-dot baseline"></span>
@@ -32,16 +32,16 @@
         <!-- Baseline Chat (Left) -->
         <section class="chat-panel baseline-panel">
             <div class="panel-header">
-                <h2>🔵 SQLite Baseline</h2>
-                <span class="panel-subtitle">Official MCP Server</span>
+                <h2 id="baselineTitle">🔵 Loading...</h2>
+                <span class="panel-subtitle" id="baselineSubtitle">Connecting...</span>
             </div>
             
             <div class="messages" id="baselineMessages">
-                <div class="message">
-                    <div class="message-avatar">🔵</div>
+                <div class="message" id="baselineWelcome">
+                    <div class="message-avatar" id="baselineAvatar">🔵</div>
                     <div class="message-content">
-                        <strong>Baseline SQLite MCP Ready!</strong>
-                        <p>This is the official SQLite MCP server. Ask me about the Chinook music database.</p>
+                        <strong id="baselineWelcomeTitle">Baseline MCP Ready!</strong>
+                        <p id="baselineWelcomeText">Loading...</p>
                     </div>
                 </div>
             </div>
@@ -49,7 +49,7 @@
             <div class="input-container">
                 <div class="input-wrapper">
                     <input type="text" class="input-field" id="baselineInput" 
-                           placeholder="Ask the baseline MCP... 🎵" disabled>
+                           placeholder="Loading..." disabled>
                     <button class="send-btn baseline-btn" id="baselineSendButton" disabled>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -67,16 +67,16 @@
         <!-- Enhanced Chat (Right) -->
         <section class="chat-panel enhanced-panel">
             <div class="panel-header">
-                <h2>🔴 SQLite Enhanced</h2>
-                <span class="panel-subtitle">Custom Enhanced Version</span>
+                <h2 id="enhancedTitle">🔴 Loading...</h2>
+                <span class="panel-subtitle" id="enhancedSubtitle">Connecting...</span>
             </div>
             
             <div class="messages" id="enhancedMessages">
-                <div class="message">
-                    <div class="message-avatar">🔴</div>
+                <div class="message" id="enhancedWelcome">
+                    <div class="message-avatar" id="enhancedAvatar">🔴</div>
                     <div class="message-content">
-                        <strong>Enhanced SQLite MCP Ready!</strong>
-                        <p>This is the enhanced SQLite MCP server with custom improvements. Ask me about the Chinook music database.</p>
+                        <strong id="enhancedWelcomeTitle">Enhanced MCP Ready!</strong>
+                        <p id="enhancedWelcomeText">Loading...</p>
                     </div>
                 </div>
             </div>
@@ -84,7 +84,7 @@
             <div class="input-container">
                 <div class="input-wrapper">
                     <input type="text" class="input-field" id="enhancedInput" 
-                           placeholder="Ask the enhanced MCP... 🎵" disabled>
+                           placeholder="Loading..." disabled>
                     <button class="send-btn enhanced-btn" id="enhancedSendButton" disabled>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="22" y1="2" x2="11" y2="13"></line>
