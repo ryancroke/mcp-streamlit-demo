@@ -1,0 +1,49 @@
+{
+  "comparison_name": "Sequential Thinking MCP Comparison",
+  "comparison_description": "Comparing Sequential Thinking MCP baseline vs enhanced versions for dynamic reasoning.",
+  "data_files": [],
+  "baseline": {
+    "source": {
+      "type": "github",
+      "repo": "modelcontextprotocol/servers",
+      "branch": "main",
+      "subdirectory": "src/sequentialthinking",
+      "install_dir": "temp/sequential_baseline_from_git"
+    },
+    "mcp_server": {
+      "name": "sequential_baseline_git",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "ui": {
+      "title": "Sequential Thinking Baseline",
+      "color": "#9B59B6",
+      "icon": "🧠"
+    }
+  },
+  "enhanced": {
+    "source": {
+      "type": "github",
+      "repo": "modelcontextprotocol/servers",
+      "branch": "main",
+      "subdirectory": "src/sequentialthinking",
+      "install_dir": "temp/sequential_enhanced_from_git"
+    },
+    "mcp_server": {
+      "name": "sequential_enhanced_git",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "ui": {
+      "title": "Sequential Thinking Enhanced",
+      "color": "#E74C3C",
+      "icon": "🚀"
+    }
+  }
+}

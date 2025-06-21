@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -16,6 +17,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
+from ..handlers import MCPServerHandlerRegistry
 from .mcp_interface import MCPInterface, create_mcp_interface_from_config
 
 
@@ -42,6 +44,7 @@ class SimpleMCPOrchestrator:
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         self.checkpointer = InMemorySaver()
         self.graph = None
+        self.handler_registry = MCPServerHandlerRegistry()
 
     def _load_config_from_file(self) -> dict:
         """Load MCP server configuration from file."""
@@ -64,7 +67,7 @@ class SimpleMCPOrchestrator:
         self.graph = self._build_graph()
 
     async def _setup_github_source(self, config: dict) -> dict:
-        """Clone GitHub repository and setup MCP server configuration."""
+        """Clone GitHub repository and setup MCP server configuration using handler system."""
         source_config = config["source"]
         mcp_server_config = config["mcp_server"].copy()
 
@@ -81,43 +84,22 @@ class SimpleMCPOrchestrator:
             if os.path.exists(install_dir):
                 shutil.rmtree(install_dir)
 
-            # Clone repository
-            print(f"🔄 Cloning {repo} (branch: {branch}) to {install_dir}")
-            subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--branch",
-                    branch,
-                    f"https://github.com/{repo}.git",
-                    install_dir,
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            # Clone repository with retry logic
+            self._clone_with_retry(repo, install_dir, branch)
 
-            # Change to cloned directory for dependency installation
+            # Determine working directory
             work_dir = (
                 Path(install_dir) / subdirectory if subdirectory else Path(install_dir)
             )
 
-            # Install dependencies
-            print(f"📦 Installing dependencies in {work_dir}")
-            subprocess.run(
-                ["uv", "sync"], cwd=work_dir, check=True, capture_output=True, text=True
-            )
+            # Auto-detect appropriate handler for this MCP server type
+            handler = self.handler_registry.get_handler(work_dir, mcp_server_config)
 
-            # Update MCP server configuration
-            updated_config = mcp_server_config.copy()
+            # Install dependencies using the appropriate handler
+            handler.install_dependencies(work_dir)
 
-            # Insert --directory argument at the beginning of args
-            new_args = ["--directory", str(work_dir)]
-            new_args.extend(updated_config["args"])
-            updated_config["args"] = new_args
-
-            # Convert relative data file paths to absolute paths
-            updated_config = self._resolve_data_paths(updated_config, work_dir)
+            # Transform command configuration for local execution
+            updated_config = handler.transform_command(mcp_server_config, work_dir)
 
             print(f"✅ GitHub source setup complete for {repo}")
             return updated_config
@@ -131,23 +113,6 @@ class SimpleMCPOrchestrator:
             print(f"❌ {error_msg}")
             raise RuntimeError(error_msg)
 
-    def _resolve_data_paths(self, config: dict, work_dir: Path) -> dict:
-        """Convert relative data file paths to absolute paths from project root."""
-        updated_config = config.copy()
-        updated_args = []
-
-        project_root = Path.cwd()
-
-        for arg in updated_config["args"]:
-            if arg.startswith("data/"):
-                # Convert relative data path to absolute path
-                absolute_path = project_root / arg
-                updated_args.append(str(absolute_path))
-            else:
-                updated_args.append(arg)
-
-        updated_config["args"] = updated_args
-        return updated_config
 
     def _build_graph(self):
         """Build simple LangGraph with memory."""
@@ -161,6 +126,81 @@ class SimpleMCPOrchestrator:
         graph.add_edge("query_mcp", END)
 
         return graph.compile(checkpointer=self.checkpointer)
+
+    def _clone_with_retry(
+        self,
+        repo: str,
+        install_dir: str,
+        branch: str = "main",
+        max_retries: int = 3,
+        timeout: int = 300,
+    ) -> None:
+        """
+        Clone a Git repository with retry logic for network resilience.
+
+        Args:
+            repo: Repository name (e.g., 'modelcontextprotocol/servers')
+            install_dir: Local directory to clone into
+            branch: Git branch to clone
+            max_retries: Maximum number of retry attempts
+            timeout: Timeout in seconds for each clone attempt
+
+        Raises:
+            subprocess.CalledProcessError: If all retry attempts fail
+        """
+        repo_url = f"https://github.com/{repo}.git"
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"🔄 Cloning {repo} (branch: {branch}) to {install_dir}")
+                if attempt > 0:
+                    print(f"   Attempt {attempt + 1}/{max_retries}")
+                
+                subprocess.run(
+                    [
+                        "git",
+                        "clone",
+                        "--branch",
+                        branch,
+                        repo_url,
+                        install_dir,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                print(f"✅ Successfully cloned {repo}")
+                return  # Success - exit retry loop
+                
+            except subprocess.TimeoutExpired:
+                error_msg = f"Git clone timed out after {timeout} seconds"
+                if attempt == max_retries - 1:  # Last attempt
+                    print(f"❌ {error_msg} - all retry attempts exhausted")
+                    raise subprocess.CalledProcessError(
+                        1, "git clone", stderr=f"Timeout after {max_retries} attempts"
+                    )
+                else:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"⚠️  {error_msg} - retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                    
+            except subprocess.CalledProcessError as e:
+                error_details = e.stderr if e.stderr else str(e)
+                if "network" in error_details.lower() or "timeout" in error_details.lower() or "recv failure" in error_details.lower():
+                    # Network-related error - retry
+                    if attempt == max_retries - 1:  # Last attempt
+                        print(f"❌ Network error persists after {max_retries} attempts: {error_details}")
+                        raise
+                    else:
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        print(f"⚠️  Network error (attempt {attempt + 1}/{max_retries}): {error_details}")
+                        print(f"   Retrying in {wait_time}s...")
+                        time.sleep(wait_time)
+                else:
+                    # Non-network error (repo not found, auth issues, etc.) - don't retry
+                    print(f"❌ Repository error (not retrying): {error_details}")
+                    raise
 
     async def _contextualize_query(self, state: State) -> State:
         """Rewrite the user's query using conversation history for context."""

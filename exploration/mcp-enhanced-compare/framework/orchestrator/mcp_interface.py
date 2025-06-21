@@ -90,10 +90,8 @@ class MCPInterface:
         if not self.agent or not self.client:
             return False
         try:
-            # Try a simple operation for SQLite
-            result = await self.agent.run(
-                "List the names of all tables in the database"
-            )
+            # Use a generic health check that works for any MCP server
+            result = await self.agent.run("What tools are available?")
             success = "error" not in str(result).lower() and len(str(result)) > 0
             return success
         except Exception as e:

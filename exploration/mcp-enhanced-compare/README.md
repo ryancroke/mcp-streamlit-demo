@@ -1,12 +1,14 @@
 # MCP Comparison Framework
 
-A reusable, configuration-driven framework for comparing baseline vs enhanced MCP (Model Context Protocol) servers side-by-side. **No local MCP servers required** - automatically clones and runs servers directly from GitHub repositories.
+A reusable, configuration-driven framework for comparing baseline vs enhanced MCP (Model Context Protocol) servers side-by-side. **No local MCP servers required** - automatically clones and runs servers directly from GitHub repositories with intelligent auto-detection of MCP server types.
 
 ## Features
 
 - **✅ Multi-Comparison Switching**: Real-time switching between different MCP types via web UI dropdown
+- **✅ Pluggable Handler Architecture**: Auto-detection and support for multiple MCP server types (Python, Node.js, Docker, etc.)
 - **✅ GitHub Integration**: Automatically clones MCP servers from any GitHub repository
 - **✅ Configuration-Driven**: Fully configurable through JSON files - no hardcoded paths or UI text
+- **✅ Zero Conditionals**: Extensible architecture without MCP-specific code branches
 - **✅ Dynamic UI**: Interface adapts automatically to configuration (titles, colors, icons)
 - **✅ Dual-Chat Interface**: Separate conversation threads for baseline and enhanced versions
 - **✅ Real-time Comparison**: See how different MCP implementations handle the same queries
@@ -35,7 +37,12 @@ A reusable, configuration-driven framework for comparing baseline vs enhanced MC
 - Conversation isolation between different comparison types
 - Template directory exclusion for clean configuration management
 
-**Phase 4 📋 NEXT**: Sequential Thinking MCP example
+**Phase 4 ✅ COMPLETED**: Pluggable Handler Architecture & Sequential Thinking MCP
+- **Handler System**: Eliminated all MCP-specific conditionals from orchestrator
+- **Auto-Detection**: Automatic MCP server type detection (Python/uv, Node.js/npm, Docker, Generic)
+- **Sequential Thinking MCP**: Working example with step-by-step reasoning
+- **Extensible**: Easy addition of new MCP types without core code changes
+- **Zero Configuration**: MCP server types detected automatically
 
 ## Quick Start
 
@@ -50,8 +57,10 @@ A reusable, configuration-driven framework for comparing baseline vs enhanced MC
    ```
    
    The framework will automatically:
-   - Clone SQLite MCP servers from GitHub (`modelcontextprotocol/servers-archived`)
-   - Install dependencies in temporary directories
+   - Clone multiple MCP servers from GitHub (SQLite and Sequential Thinking)
+   - Auto-detect MCP server types (Python vs Node.js)
+   - Install dependencies using appropriate tools (uv, npm)
+   - Build projects as needed (TypeScript compilation)
    - Start both baseline and enhanced versions
    - Disable file watching to prevent reload loops
 
@@ -85,13 +94,22 @@ mcp-enhanced-compare/
 ├── framework/              # Reusable comparison framework
 │   ├── comparison_manager.py    # Multi-comparison management
 │   ├── dual_chat_ui/      # Side-by-side chat interface with comparison selector
+│   ├── handlers/          # 🆕 Pluggable MCP server handlers
+│   │   ├── base.py       # Abstract handler interface
+│   │   ├── python_uv.py  # Python/uv MCP handler
+│   │   ├── nodejs.py     # Node.js/npm MCP handler
+│   │   ├── generic.py    # Fallback handler
+│   │   └── registry.py   # Handler registry & auto-detection
 │   └── orchestrator/      # GitHub-enabled orchestrator
 ├── configs/               # MCP-specific configurations
 │   ├── sqlite/           # SQLite MCP comparison config (GitHub sources)
+│   ├── sequential/       # 🆕 Sequential Thinking MCP comparison
 │   └── template/         # Template for new MCP comparisons (excluded from loading)
 ├── temp/                 # Auto-generated (git-ignored)
-│   ├── mcp_baseline_from_git/   # Cloned baseline MCP server
-│   └── mcp_enhanced_from_git/   # Cloned enhanced MCP server
+│   ├── mcp_baseline_from_git/   # Cloned baseline MCP server (SQLite)
+│   ├── mcp_enhanced_from_git/   # Cloned enhanced MCP server (SQLite)
+│   ├── sequential_baseline_from_git/   # 🆕 Cloned Sequential Thinking baseline
+│   └── sequential_enhanced_from_git/   # 🆕 Cloned Sequential Thinking enhanced
 ├── data/                 # Database files only
 │   └── Chinook_Sqlite.db
 └── experiments/          # Results and test data
@@ -129,10 +147,19 @@ See `configs/sqlite/comparison_config.json` for the complete GitHub-enabled exam
 
 ## Current Implementation
 
-- **Target MCP**: SQLite MCP Server (auto-cloned from GitHub)
-- **Source**: `modelcontextprotocol/servers-archived` repository
-- **Baseline**: Official SQLite MCP implementation (from GitHub)
-- **Enhanced**: Same implementation (demonstrates GitHub workflow)
+The framework includes **two working MCP comparisons** out of the box:
+
+### SQLite MCP Comparison
+- **Type**: Python/uv-based MCP server
+- **Source**: `modelcontextprotocol/servers-archived` repository  
+- **Features**: Database queries, SQL operations
+- **Auto-Detection**: ✅ Detected by `pyproject.toml` presence
+
+### Sequential Thinking MCP Comparison  
+- **Type**: Node.js/TypeScript-based MCP server
+- **Source**: `modelcontextprotocol/servers` repository
+- **Features**: Step-by-step reasoning, dynamic thinking process
+- **Auto-Detection**: ✅ Detected by `package.json` presence
 
 ## Usage
 
@@ -144,6 +171,8 @@ See `configs/sqlite/comparison_config.json` for the complete GitHub-enabled exam
 6. Use example queries to test common scenarios
 
 ## Adding New MCP Comparisons
+
+Adding a new MCP comparison is incredibly easy thanks to the pluggable handler architecture:
 
 1. **Copy the template**: `cp -r configs/template configs/your_mcp`
 2. **Edit the configuration**: Update `configs/your_mcp/comparison_config.json` with your:
@@ -157,10 +186,19 @@ See `configs/sqlite/comparison_config.json` for the complete GitHub-enabled exam
    
 The framework automatically:
 - **Discovers** your new comparison configuration
+- **Auto-detects** MCP server type (Python, Node.js, Docker, etc.)
 - **Clones** the GitHub repositories
-- **Installs** dependencies
+- **Installs** dependencies using the appropriate tools
+- **Builds** projects as needed (TypeScript, etc.)
 - **Adds** your comparison to the dropdown selector
-- **No manual configuration** needed!
+- **Zero manual configuration** needed!
+
+### Supported MCP Server Types
+- **Python/uv** - Detected by `pyproject.toml` 
+- **Node.js/npm** - Detected by `package.json`
+- **Generic** - Fallback for unknown types
+- **Docker** - Coming soon (easily extensible)
+- **Go, Rust, etc.** - Future handlers (pluggable architecture)
 
 ## Commands
 

@@ -12,11 +12,13 @@ This file provides guidance to Claude Code when working with the MCP Comparison 
 ## Architecture
 - **Multi-Comparison Management**: ComparisonManager handles multiple MCP comparison configurations
 - **Real-time Switching**: Dropdown UI for switching between different MCP types without restart
+- **Pluggable Handler Architecture**: Auto-detection and support for unlimited MCP server types
 - **GitHub Integration**: Automatically clones MCP servers from GitHub repositories
 - **Comparison Framework**: Reusable system for comparing MCP servers
 - **Dual-Chat UI**: Side-by-side interface with separate conversation threads
 - **GitHub-Enabled Orchestrator**: Handles repository cloning, dependency installation, and MCP server management
 - **Configuration-Driven**: Easy swapping of different MCP servers via GitHub sources
+- **Zero Conditionals**: Extensible without MCP-specific code branches
 - **Template Exclusion**: Automatically excludes template directories from loading
 
 ## Code Style Guidelines
@@ -31,15 +33,24 @@ This file provides guidance to Claude Code when working with the MCP Comparison 
 - `framework/`: Core reusable components with GitHub integration
   - `comparison_manager.py`: Multi-comparison management and orchestrator lifecycle
   - `dual_chat_ui/`: Side-by-side interface with comparison selector dropdown
+  - `handlers/`: 🆕 Pluggable MCP server handlers
+    - `base.py`: Abstract handler interface
+    - `python_uv.py`: Python/uv MCP handler
+    - `nodejs.py`: Node.js/npm MCP handler
+    - `generic.py`: Fallback handler
+    - `registry.py`: Handler registry & auto-detection
   - `orchestrator/`: GitHub-enabled MCP server orchestrator
 - `configs/`: MCP server configurations with GitHub source support
-  - `sqlite/`: Working SQLite MCP comparison
+  - `sqlite/`: Working SQLite MCP comparison (Python/uv)
+  - `sequential/`: 🆕 Sequential Thinking MCP comparison (Node.js/npm)
   - `template/`: Template for new comparisons (automatically excluded from loading)
 - `temp/`: Auto-generated directories for cloned MCP servers (git-ignored)
 - `data/`: Database files only
 - `experiments/`: Evaluation results and test data
 
 ## Development Notes
+- **Pluggable Handler Architecture** - Zero conditionals in orchestrator, unlimited MCP server type support
+- **Auto-Detection** - MCP server types detected automatically (Python/uv, Node.js/npm, Docker, etc.)
 - **Multi-comparison architecture** - ComparisonManager handles multiple MCP types simultaneously
 - **No local MCP servers required** - everything cloned from GitHub
 - Each MCP server runs in isolation from cloned temporary directories
@@ -51,3 +62,4 @@ This file provides guidance to Claude Code when working with the MCP Comparison 
 - File watching automatically disabled when using GitHub sources to prevent reload loops
 - **Template directories automatically excluded** from configuration loading
 - Temp directories cleaned on startup, preserved for debugging
+- **Handler Examples**: SQLite (Python/uv), Sequential Thinking (Node.js/npm) both working
